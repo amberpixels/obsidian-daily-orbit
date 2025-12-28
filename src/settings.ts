@@ -52,7 +52,7 @@ export class DailyNoteNavbarSettingTab extends PluginSettingTab {
 					}
 					this.plugin.settings.dailyNoteDateFormat = value;
 					await this.plugin.saveSettings();
-					this.plugin.addDailyNoteNavbar();
+					this.plugin.rerenderNavbars();
 				}));
 
 		// Date format
@@ -68,7 +68,7 @@ export class DailyNoteNavbarSettingTab extends PluginSettingTab {
 					}
 					this.plugin.settings.dateFormat = value;
 					await this.plugin.saveSettings();
-					this.plugin.addDailyNoteNavbar();
+					this.plugin.rerenderNavbars();
 				}));
 
 		// Tooltip date format
@@ -84,7 +84,7 @@ export class DailyNoteNavbarSettingTab extends PluginSettingTab {
 					}
 					this.plugin.settings.tooltipDateFormat = value;
 					await this.plugin.saveSettings();
-					this.plugin.addDailyNoteNavbar();
+					this.plugin.rerenderNavbars();
 				}));
 
 		// First day of week
@@ -97,7 +97,7 @@ export class DailyNoteNavbarSettingTab extends PluginSettingTab {
 				.onChange(async (value: FirstDayOfWeek) => {
 					this.plugin.settings.firstDayOfWeek = value;
 					await this.plugin.saveSettings();
-					this.plugin.addDailyNoteNavbar();
+					this.plugin.rerenderNavbars();
 				}));
 
 		// Set active
@@ -121,7 +121,7 @@ export class DailyNoteNavbarSettingTab extends PluginSettingTab {
 				.onChange(async (value: FileOpenType) => {
 					this.plugin.settings.defaultOpenType = value;
 					await this.plugin.saveSettings();
-					this.plugin.addDailyNoteNavbar();
+					this.plugin.rerenderNavbars();
 				}));
 	}
 }
