@@ -9,6 +9,9 @@ export interface DailyNoteNavbarSettings {
 	firstDayOfWeek: FirstDayOfWeek;
 	defaultOpenType: FileOpenType;
 	setActive: boolean;
+	enableAutoMetadata: boolean;
+	metadataNamespace: string;
+	metadataProperties: string; // Multi-line text: "key: template" per line
 }
 
 /**
@@ -19,7 +22,13 @@ export const DEFAULT_SETTINGS: DailyNoteNavbarSettings = {
 	tooltipDateFormat: "YYYY-MM-DD",
 	firstDayOfWeek: "Monday",
 	defaultOpenType: "Active",
-	setActive: true
+	setActive: true,
+	enableAutoMetadata: false,
+	metadataNamespace: "dn-",
+	metadataProperties: `date: {YYYY-MM-DD}
+week: {WYYYY}-W{WW}
+month: {MM}
+year: {YYYY}`
 }
 
 /**
@@ -39,8 +48,8 @@ export class DailyNoteNavbarSettingTab extends PluginSettingTab {
 
 		// Date format
 		new Setting(containerEl)
-			.setName('Date format')
-			.setDesc('Date format for the daily note bar.')
+			.setName('Display date format')
+			.setDesc('Date format for the daily note navbar buttons.')
 			.addText(text => text
 				.setPlaceholder(DEFAULT_SETTINGS.dateFormat)
 				.setValue(this.plugin.settings.dateFormat)
@@ -56,7 +65,7 @@ export class DailyNoteNavbarSettingTab extends PluginSettingTab {
 		// Tooltip date format
 		new Setting(containerEl)
 			.setName('Tooltip date format')
-			.setDesc('Date format for tooltips.')
+			.setDesc('Date format shown when hovering over navbar buttons.')
 			.addText(text => text
 				.setPlaceholder(DEFAULT_SETTINGS.tooltipDateFormat)
 				.setValue(this.plugin.settings.tooltipDateFormat)
@@ -105,5 +114,50 @@ export class DailyNoteNavbarSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 					this.plugin.rerenderNavbars();
 				}));
+
+		// Auto-metadata section
+		containerEl.createEl("h3", { text: "Auto-metadata" });
+
+		// Enable auto-metadata toggle
+		new Setting(containerEl)
+			.setName('Enable auto-metadata')
+			.setDesc('Automatically populate frontmatter properties when opening daily notes.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.enableAutoMetadata)
+				.onChange(async (value) => {
+					this.plugin.settings.enableAutoMetadata = value;
+					await this.plugin.saveSettings();
+				}));
+
+		// Metadata namespace input
+		new Setting(containerEl)
+			.setName('Metadata namespace')
+			.setDesc('Prefix for auto-generated properties (e.g., "dn-" creates "dn-date", "dn-week", etc.).')
+			.addText(text => text
+				.setPlaceholder(DEFAULT_SETTINGS.metadataNamespace)
+				.setValue(this.plugin.settings.metadataNamespace)
+				.onChange(async (value) => {
+					if (value.trim() === "") {
+						value = DEFAULT_SETTINGS.metadataNamespace;
+					}
+					this.plugin.settings.metadataNamespace = value;
+					await this.plugin.saveSettings();
+				}));
+
+		// Metadata properties configuration
+		new Setting(containerEl)
+			.setName('Metadata properties')
+			.setDesc('Configure which properties to create and their format. One per line: "key: template". Available tokens: {YYYY} (year), {MM} (month), {DD} (day), {WW} (week), {WYYYY} (week year), {ddd} (day name), {MMM} (month name), and more.')
+			.addTextArea(text => {
+				text
+					.setPlaceholder(DEFAULT_SETTINGS.metadataProperties)
+					.setValue(this.plugin.settings.metadataProperties)
+					.onChange(async (value) => {
+						this.plugin.settings.metadataProperties = value;
+						await this.plugin.saveSettings();
+					});
+				text.inputEl.rows = 8;
+				text.inputEl.cols = 50;
+			});
 	}
 }

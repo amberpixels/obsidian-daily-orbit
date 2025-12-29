@@ -87,7 +87,10 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 			}
 			return;
 		}
-		
+
+		// Update metadata when opening a daily note
+		await this.updateDailyNoteMetadata(activeFile);
+
 		if (navbar) {
 			// Reuse navbar for new file
 			navbar.rerender();
@@ -117,6 +120,136 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 	rerenderNavbars() {
 		for (const navbar of Object.values(this.navbars)) {
 			navbar.rerender();
+		}
+	}
+
+	/**
+	 * Update frontmatter metadata for a daily note file
+	 * Adds/updates properties based on configured templates
+	 */
+	async updateDailyNoteMetadata(file: TFile): Promise<void> {
+		// Early exit if feature is disabled
+		if (!this.settings.enableAutoMetadata) {
+			return;
+		}
+
+		// Check if file is a daily note
+		const fileDate = this.timewalkService.getDailyNoteDate(file);
+		if (!fileDate) {
+			return; // Not a daily note, skip
+		}
+
+		try {
+			// Parse metadata properties from settings
+			const properties = this.parseMetadataProperties(this.settings.metadataProperties);
+			if (properties.length === 0) {
+				return; // No properties configured
+			}
+
+			const namespace = this.settings.metadataNamespace;
+
+			// Update frontmatter atomically
+			await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+				for (const { key, template } of properties) {
+					const value = this.replaceTemplateTokens(template, fileDate);
+					frontmatter[`${namespace}${key}`] = value;
+				}
+			});
+
+			console.log(`[Daily Note Navbar] Updated metadata for ${file.path}`);
+		} catch (error) {
+			console.error(`[Daily Note Navbar] Failed to update metadata for ${file.path}:`, error);
+			// Don't show Notice - this is a background operation
+		}
+	}
+
+	/**
+	 * Parse metadata properties configuration string
+	 * Format: "key: template" per line, ignoring empty lines and comments
+	 */
+	private parseMetadataProperties(config: string): Array<{ key: string, template: string }> {
+		const properties: Array<{ key: string, template: string }> = [];
+		const lines = config.split('\n');
+
+		for (const line of lines) {
+			const trimmed = line.trim();
+			// Skip empty lines and comments
+			if (trimmed === '' || trimmed.startsWith('#')) {
+				continue;
+			}
+
+			// Parse "key: template" format
+			const colonIndex = trimmed.indexOf(':');
+			if (colonIndex === -1) {
+				continue; // Invalid format, skip
+			}
+
+			const key = trimmed.substring(0, colonIndex).trim();
+			const template = trimmed.substring(colonIndex + 1).trim();
+
+			if (key && template) {
+				properties.push({ key, template });
+			}
+		}
+
+		return properties;
+	}
+
+	/**
+	 * Replace template tokens with actual date values
+	 * Supports: {YYYY}, {YY}, {MM}, {M}, {MMM}, {MMMM}, {DD}, {D}, {ddd}, {dddd}, {WW}, {W}, {WYYYY}
+	 */
+	private replaceTemplateTokens(template: string, date: moment.Moment): string | number {
+		let result = template;
+
+		// Get week number and year for week-related tokens
+		const { weekNumber, weekYear } = this.getWeekNumberAndYear(date);
+
+		// Replace week-specific tokens first
+		result = result.replace(/\{WYYYY\}/g, weekYear.toString());
+		result = result.replace(/\{WW\}/g, weekNumber.toString().padStart(2, '0'));
+		result = result.replace(/\{W\}/g, weekNumber.toString());
+
+		// Replace all other moment.js format tokens
+		// Match {TOKEN} pattern and replace with moment format
+		result = result.replace(/\{([^}]+)\}/g, (match, token) => {
+			return date.format(token);
+		});
+
+		// If the result is a pure number string, return as number
+		if (/^\d+$/.test(result)) {
+			return parseInt(result, 10);
+		}
+
+		return result;
+	}
+
+	/**
+	 * Calculate week number and year (handles cross-year boundaries correctly)
+	 * Respects firstDayOfWeek setting
+	 */
+	private getWeekNumberAndYear(date: moment.Moment): { weekNumber: number, weekYear: number } {
+		if (this.settings.firstDayOfWeek === "Monday") {
+			// ISO week: use isoWeek() and isoWeekYear() to handle year boundaries correctly
+			return {
+				weekNumber: date.isoWeek(),
+				weekYear: date.isoWeekYear()
+			};
+		} else {
+			// Sunday-based: calculate weeks from first Sunday of year
+			const startOfYear = date.clone().startOf('year');
+			const firstSunday = startOfYear.clone().day(0);
+			if (firstSunday.isAfter(startOfYear)) {
+				firstSunday.subtract(7, 'days');
+			}
+			const daysSinceFirstSunday = date.diff(firstSunday, 'days');
+			const weekNumber = Math.floor(daysSinceFirstSunday / 7) + 1;
+
+			// For Sunday-based, the year is always the calendar year
+			return {
+				weekNumber: weekNumber,
+				weekYear: date.year()
+			};
 		}
 	}
 
