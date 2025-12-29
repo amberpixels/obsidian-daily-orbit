@@ -236,7 +236,7 @@ export default class DailyNoteNavbar {
 	}
 
 	private createCreateButton(date: moment.Moment): void {
-		const button = new ButtonComponent(this.containerEl)
+		new ButtonComponent(this.containerEl)
 			.setClass("daily-note-navbar__create-btn")
 			.setButtonText("+")
 			.setTooltip(`Create note for ${date.format(this.plugin.settings.tooltipDateFormat)}`)
