@@ -1,9 +1,11 @@
 import { Plugin, TFile, Notice, MarkdownView, WorkspaceLeaf, moment } from 'obsidian';
 import { DailyNoteNavbarSettings, DEFAULT_SETTINGS, DailyNoteNavbarSettingTab } from './settings';
 import { FileOpenType } from './types';
-import { getDailyNoteFile, hideChildren, showChildren, selectNavbarFromView } from './utils';
+import { hideChildren, showChildren, selectNavbarFromView } from './utils';
 import { TimewalkService } from './timewalkService';
 import DailyNoteNavbar from './dailyNoteNavbar/dailyNoteNavbar';
+import DocumentNavigation from './documentNavigation/documentNavigation';
+import { createDailyNote } from 'obsidian-daily-notes-interface';
 
 /**
  * This class is the actual Obsidian plugin.
@@ -12,6 +14,9 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 	settings: DailyNoteNavbarSettings;
 	navbars: Record<string, DailyNoteNavbar> = {};
 	nextNavbarId = 0;
+	documentNavigations: Record<string, DocumentNavigation> = {};
+	nextDocNavId = 0;
+	pendingDocNavTimeout: number | null = null;
 	timewalkService: TimewalkService;
 
 	async onload() {
@@ -20,6 +25,14 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 		this.addSettingTab(new DailyNoteNavbarSettingTab(this.app, this));
 		this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf: WorkspaceLeaf) => {
 			this.addDailyNoteNavbar(leaf);
+			this.addDocumentNavigation(leaf);
+		}));
+		this.registerEvent(this.app.workspace.on("file-open", (file) => {
+			// Re-add document navigation when file opens in same leaf
+			const activeLeaf = this.app.workspace.activeLeaf;
+			if (activeLeaf) {
+				this.addDocumentNavigation(activeLeaf);
+			}
 		}));
 		this.registerEvent(this.app.workspace.on("css-change", () => this.rerenderNavbars()));
 		this.registerEvent(this.app.vault.on("create", () => {
@@ -107,14 +120,71 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 		}
 	}
 
+	async addDocumentNavigation(leaf: WorkspaceLeaf) {
+		// Check for markdown view
+		const markdownLeaves = this.app.workspace.getLeavesOfType("markdown");
+		if (!markdownLeaves.includes(leaf)) {
+			return;
+		}
+		const view = leaf.view as MarkdownView;
+		const activeFile = view.file;
+		if (!activeFile) {
+			return;
+		}
+
+		// Check if file is a daily note
+		const fileDate = this.timewalkService.getDailyNoteDate(activeFile);
+		if (!fileDate) {
+			// Not a daily note - remove navigation if exists
+			this.removeAllDocumentNavigations();
+			return;
+		}
+
+		// Cancel any pending navigation creation to prevent duplicates
+		if (this.pendingDocNavTimeout !== null) {
+			clearTimeout(this.pendingDocNavTimeout);
+			this.pendingDocNavTimeout = null;
+		}
+
+		// Remove existing navigations first to prevent duplicates
+		this.removeAllDocumentNavigations();
+
+		// Wait for content to render (H1 may not be in DOM immediately)
+		this.pendingDocNavTimeout = window.setTimeout(() => {
+			this.pendingDocNavTimeout = null;
+			const docNavId = `${this.nextDocNavId++}`;
+			const docNav = new DocumentNavigation(this, view, fileDate);
+			this.documentNavigations[docNavId] = docNav;
+
+			// Cleanup on view unload
+			view.register(() => {
+				this.removeDocumentNavigation(docNavId);
+			});
+		}, 150); // Small delay for markdown to render
+	}
+
+	removeDocumentNavigation(id: string) {
+		const docNav = this.documentNavigations[id];
+		if (docNav) {
+			docNav.destroy();
+			delete this.documentNavigations[id];
+		}
+	}
+
+	removeAllDocumentNavigations() {
+		for (const id in this.documentNavigations) {
+			this.removeDocumentNavigation(id);
+		}
+	}
+
 	async openDailyNote(date: moment.Moment, openType: FileOpenType) {
 		// Use timewalk service to find the correct file
 		let dailyNote = this.timewalkService.findDailyNote(date);
 
-		// If not found, create it using the Daily Notes interface
+		// If not found, create it directly (bypasses buggy getDailyNote lookup)
 		if (!dailyNote) {
 			console.log('[Daily Note Navbar] Creating new daily note for', date.format('YYYY-MM-DD'));
-			dailyNote = await getDailyNoteFile(date);
+			dailyNote = await createDailyNote(date);
 		}
 
 		this.openFile(dailyNote, openType);

@@ -92,7 +92,6 @@ export class TimewalkService {
     const waypoint = this.waypointMap.get(file.path);
     if (waypoint) {
       const date = waypoint.time();
-      console.log('[TimewalkService] ✅ File is a daily note:', file.path, '→', date.toISOString());
       return moment(date);
     }
 
@@ -105,12 +104,10 @@ export class TimewalkService {
       const parsedDate = moment(dateStr, "YYYY-MM-DD");
 
       if (parsedDate.isValid()) {
-        console.log('[TimewalkService] ⚠️  File not in map, but parsed from path:', file.path, '→', dateStr);
         return parsedDate;
       }
     }
 
-    console.log('[TimewalkService] ❌ Not a daily note:', file.path);
     return null;
   }
 
@@ -123,11 +120,9 @@ export class TimewalkService {
 
     if (results.length > 0) {
       const waypoint = results[0] as ObsidianFileWaypoint;
-      console.log('[TimewalkService] Found daily note for', date.format('YYYY-MM-DD'), '→', waypoint.getFile().path);
       return waypoint.getFile();
     }
 
-    console.log('[TimewalkService] No daily note found for', date.format('YYYY-MM-DD'));
     return null;
   }
 
@@ -136,6 +131,58 @@ export class TimewalkService {
    */
   hasDailyNote(date: moment.Moment): boolean {
     return this.findDailyNote(date) !== null;
+  }
+
+  /**
+   * Get the previous daily note before the given date
+   */
+  getPreviousDailyNote(currentDate: moment.Moment): TFile | null {
+    const { waypoints, currentIndex } = this.getSortedWaypoints(currentDate);
+
+    if (currentIndex > 0) {
+      return (waypoints[currentIndex - 1] as ObsidianFileWaypoint).getFile();
+    }
+    return null;
+  }
+
+  /**
+   * Get the next daily note after the given date
+   */
+  getNextDailyNote(currentDate: moment.Moment): TFile | null {
+    const { waypoints, currentIndex } = this.getSortedWaypoints(currentDate);
+
+    if (currentIndex !== -1 && currentIndex < waypoints.length - 1) {
+      return (waypoints[currentIndex + 1] as ObsidianFileWaypoint).getFile();
+    }
+    return null;
+  }
+
+  /**
+   * Get sorted waypoints and find current note's index
+   */
+  private getSortedWaypoints(currentDate: moment.Moment): { waypoints: Waypoint[], currentIndex: number } {
+    const waypoints: Waypoint[] = [];
+
+    // Traverse in 'future' direction (oldest first) to get chronological order
+    this.timewalk.traverse((waypoint) => {
+      waypoints.push(waypoint);
+    }, { direction: 'future', filter: 'leaves' });
+
+    // Find current note's index
+    const currentIndex = waypoints.findIndex(wp => {
+      return this.isSameDay(wp.time(), currentDate.toDate());
+    });
+
+    return { waypoints, currentIndex };
+  }
+
+  /**
+   * Helper to check if two dates are the same day
+   */
+  private isSameDay(date1: Date, date2: Date): boolean {
+    return date1.getFullYear() === date2.getFullYear() &&
+           date1.getMonth() === date2.getMonth() &&
+           date1.getDate() === date2.getDate();
   }
 
   /**
