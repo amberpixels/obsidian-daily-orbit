@@ -1,9 +1,10 @@
-import { ButtonComponent, MarkdownView, Notice, Menu, moment, Keymap } from "obsidian";
+import { ButtonComponent, MarkdownView, Notice, Menu, moment, Keymap, setIcon } from "obsidian";
 import { getDatesInWeekByDate } from "../utils";
-import { FileOpenType } from "../types";
+import { FileOpenType, NavbarMode } from "../types";
 import { FILE_OPEN_TYPES_MAPPING, FILE_OPEN_TYPES_TO_PANE_TYPE } from "./consts";
 import { createDailyNote } from 'obsidian-daily-notes-interface';
 import DailyNoteNavbarPlugin from "../main";
+import { buildGlobalTimeline, GlobalNavItem } from "./globalModeBuilder";
 
 export default class DailyNoteNavbar {
 	id: string;
@@ -14,12 +15,26 @@ export default class DailyNoteNavbar {
 	parentEl: HTMLElement;
 	view: MarkdownView;
 
+	// Global mode state
+	mode: NavbarMode;
+	globalItems: GlobalNavItem[] = [];
+	scrollContainerEl?: HTMLElement;
+	floatingHeaderEl?: HTMLElement;
+	weekNumberEl?: HTMLElement;
+	savedGlobalScrollPosition?: number;
+	viewportCenterDate?: moment.Moment; // Shared between modes for position sync
+	positionBeforeToday?: { weekOffset: number; viewportCenterDate?: moment.Moment }; // For "back" functionality
+
 	constructor(plugin: DailyNoteNavbarPlugin, id: string, view: MarkdownView, parentEl: HTMLElement, date: moment.Moment) {
 		this.id = id;
 		this.date = date;
 		this.weekOffset = 0;
 		this.plugin = plugin;
 		this.view = view;
+
+		// Initialize mode from settings
+		this.mode = plugin.settings.navbarMode;
+		this.globalItems = [];
 
 		this.containerEl = createDiv();
 		this.containerEl.addClass("daily-note-navbar");
@@ -34,6 +49,11 @@ export default class DailyNoteNavbar {
 	}
 
 	rerender() {
+		// Save scroll position before rebuilding (for global mode)
+		if (this.mode === 'global' && this.scrollContainerEl) {
+			this.savedGlobalScrollPosition = this.scrollContainerEl.scrollLeft;
+		}
+
 		// Update date from view if it has changed
 		const activeFile = this.view.file;
 		if (activeFile) {
@@ -45,42 +65,226 @@ export default class DailyNoteNavbar {
 		}
 		this.containerEl.replaceChildren();
 
-		const currentDate = moment();
+		// Row 1: Header (shared between modes)
+		this.renderHeaderRow();
+
+		// Row 2: Timeline row (toggle + < + content + >)
+		this.renderTimelineRow();
+
+		// Row 3: Temporarily disabled
+		// if (this.mode === 'weekly') {
+		// 	this.renderAuxiliaryRow();
+		// }
+	}
+
+	// ==================== ROW 1: HEADER ROW (shared) ====================
+	private renderHeaderRow() {
+		const headerRow = this.containerEl.createDiv({
+			cls: 'daily-note-navbar__header-row'
+		});
+
+		// Week number (display only)
+		const displayDate = this.date.clone().add(this.weekOffset, "week");
+		const weekNumber = this.getWeekNumber(displayDate);
+		this.weekNumberEl = headerRow.createSpan({
+			cls: "daily-note-navbar__week-number",
+			text: `W${weekNumber}`
+		});
+
+		// Month/Year label
+		this.floatingHeaderEl = headerRow.createSpan({
+			cls: 'daily-note-navbar__floating-header'
+		});
+		this.updateFloatingHeader(displayDate);
+
+		// Center to today button (smart toggle: go to today / go back)
+		const centerBtn = headerRow.createEl('button', {
+			cls: 'daily-note-navbar__header-btn',
+			attr: { 'aria-label': 'Go to today', 'title': 'Go to today (click again to go back)' }
+		});
+		setIcon(centerBtn, 'crosshair');
+		centerBtn.addEventListener('click', () => {
+			const today = moment();
+			const todayWeekOffset = today.diff(this.date, 'weeks');
+
+			// Check if we're currently showing today
+			const isAtToday = this.viewportCenterDate?.isSame(today, 'day') ||
+				(this.weekOffset === todayWeekOffset && !this.viewportCenterDate);
+
+			if (isAtToday && this.positionBeforeToday) {
+				// Already at today - go back to previous position
+				this.weekOffset = this.positionBeforeToday.weekOffset;
+				this.viewportCenterDate = this.positionBeforeToday.viewportCenterDate;
+				this.savedGlobalScrollPosition = undefined;
+				this.positionBeforeToday = undefined; // Clear after using
+			} else {
+				// Save current position and go to today
+				this.positionBeforeToday = {
+					weekOffset: this.weekOffset,
+					viewportCenterDate: this.viewportCenterDate?.clone()
+				};
+				// Calculate week offset to show today
+				this.weekOffset = todayWeekOffset;
+				this.viewportCenterDate = today.clone();
+				this.savedGlobalScrollPosition = undefined;
+			}
+			this.rerender();
+		});
+	}
+
+	// ==================== ROW 2: TIMELINE ROW (shared structure) ====================
+	private renderTimelineRow() {
+		const timelineRow = this.containerEl.createDiv({
+			cls: 'daily-note-navbar__timeline-row'
+		});
+
+		// Mode toggle button
+		const toggleBtn = new ButtonComponent(timelineRow)
+			.setClass('daily-note-navbar__mode-toggle')
+			.setIcon('list')
+			.setTooltip(this.mode === 'weekly' ? 'Switch to timeline view' : 'Switch to week view')
+			.onClick(async () => {
+				const oldMode = this.mode;
+				this.mode = this.mode === 'weekly' ? 'global' : 'weekly';
+				this.plugin.settings.navbarMode = this.mode;
+				await this.plugin.saveSettings();
+
+				// Sync position between modes
+				if (oldMode === 'weekly' && this.mode === 'global') {
+					// Weekly → Global: save current week's center date for global to scroll to
+					const displayDate = this.date.clone().add(this.weekOffset, "week");
+					this.viewportCenterDate = displayDate;
+					this.savedGlobalScrollPosition = undefined; // Force scroll to viewportCenterDate
+				} else if (oldMode === 'global' && this.mode === 'weekly') {
+					// Global → Weekly: calculate weekOffset from viewportCenterDate
+					if (this.viewportCenterDate) {
+						const diffWeeks = this.viewportCenterDate.diff(this.date, 'weeks');
+						this.weekOffset = diffWeeks;
+					}
+				}
+
+				this.rerender();
+			});
+		if (this.mode === 'global') {
+			toggleBtn.buttonEl.addClass('daily-note-navbar__mode-toggle--active');
+		}
+
+		// Previous button
+		new ButtonComponent(timelineRow)
+			.setClass("daily-note-navbar__nav-arrow")
+			.setClass("daily-note-navbar__nav-prev")
+			.setIcon("chevron-left")
+			.setTooltip(this.mode === 'weekly' ? "Previous week" : "Scroll left")
+			.onClick(() => {
+				if (this.mode === 'weekly') {
+					this.weekOffset--;
+					this.viewportCenterDate = this.date.clone().add(this.weekOffset, "week");
+					this.rerender();
+				} else {
+					this.scrollByElements(-3);
+				}
+			});
+
+		// Content area (mode-specific)
+		const contentArea = timelineRow.createDiv({
+			cls: 'daily-note-navbar__content-area'
+		});
+
+		if (this.mode === 'global') {
+			this.renderGlobalContent(contentArea);
+		} else {
+			this.renderWeeklyContent(contentArea);
+			this.setupWeeklyScrollBehavior(contentArea);
+		}
+
+		// Next button
+		new ButtonComponent(timelineRow)
+			.setClass("daily-note-navbar__nav-arrow")
+			.setClass("daily-note-navbar__nav-next")
+			.setIcon("chevron-right")
+			.setTooltip(this.mode === 'weekly' ? "Next week" : "Scroll right")
+			.onClick(() => {
+				if (this.mode === 'weekly') {
+					this.weekOffset++;
+					this.viewportCenterDate = this.date.clone().add(this.weekOffset, "week");
+					this.rerender();
+				} else {
+					this.scrollByElements(3);
+				}
+			});
+	}
+
+	private scrollByElements(count: number) {
+		if (!this.scrollContainerEl || this.scrollContainerEl.children.length === 0) return;
+
+		// Calculate average element width (including gap)
+		const children = Array.from(this.scrollContainerEl.children) as HTMLElement[];
+		const totalWidth = children.reduce((sum, el) => sum + el.offsetWidth, 0);
+		const gap = 4; // CSS gap value
+		const avgItemWidth = (totalWidth / children.length) + gap;
+
+		// Scroll by count elements
+		const scrollAmount = avgItemWidth * count;
+		this.scrollContainerEl.scrollBy({
+			left: scrollAmount,
+			behavior: 'smooth'
+		});
+	}
+
+	private setupWeeklyScrollBehavior(contentArea: HTMLElement) {
+		let lastScrollTime = 0;
+		const scrollCooldown = 300; // ms between week changes
+
+		contentArea.addEventListener('wheel', (e) => {
+			e.preventDefault();
+
+			const now = Date.now();
+			if (now - lastScrollTime < scrollCooldown) return;
+
+			if (e.deltaY > 0) {
+				this.weekOffset++;
+			} else if (e.deltaY < 0) {
+				this.weekOffset--;
+			}
+
+			// Update viewportCenterDate for mode sync
+			this.viewportCenterDate = this.date.clone().add(this.weekOffset, "week");
+
+			lastScrollTime = now;
+			this.rerender();
+		}, { passive: false });
+	}
+
+	// ==================== ROW 3: AUXILIARY ROW (weekly mode only) ====================
+	private renderAuxiliaryRow() {
+		const auxRow = this.containerEl.createDiv({
+			cls: 'daily-note-navbar__aux-row'
+		});
+
 		const displayDate = this.date.clone().add(this.weekOffset, "week");
 		const dates = getDatesInWeekByDate(displayDate, this.plugin.settings.firstDayOfWeek);
 
-		// Calculate week number
-		const weekNumber = this.getWeekNumber(displayDate);
-
-		// Calculate edge dates (prev/next day outside current week)
+		// Edge dates
 		const prevEdgeDate = dates[0].clone().subtract(1, 'day');
 		const nextEdgeDate = dates[6].clone().add(1, 'day');
 		const prevEdgeExists = this.plugin.timewalkService.hasDailyNote(prevEdgeDate);
 		const nextEdgeExists = this.plugin.timewalkService.hasDailyNote(nextEdgeDate);
 
-		// ========== ROW 1: Week number + navigation + dates ==========
+		// Previous edge date button
+		this.createEdgeDateButton(auxRow, prevEdgeDate, prevEdgeExists, "daily-note-navbar__edge-prev");
 
-		// Week number label
-		const weekNumberEl = this.containerEl.createSpan({
-			cls: "daily-note-navbar__week-number",
-			text: `W${weekNumber}`
-		});
-		weekNumberEl.setAttribute('title', 'Click to jump to today');
-		weekNumberEl.addEventListener('click', () => {
-			this.weekOffset = 0;
-			this.rerender();
-		});
+		// Spacer between edge dates
+		auxRow.createSpan({ cls: "daily-note-navbar__spacer" });
 
-		// Previous week button
-		new ButtonComponent(this.containerEl)
-			.setClass("daily-note-navbar__change-week")
-			.setClass("daily-note-navbar__prev-week")
-			.setIcon("left-arrow")
-			.setTooltip("Previous week")
-			.onClick(() => {
-				this.weekOffset--;
-				this.rerender();
-			});
+		// Next edge date button
+		this.createEdgeDateButton(auxRow, nextEdgeDate, nextEdgeExists, "daily-note-navbar__edge-next");
+	}
+
+	// ==================== CONTENT RENDERERS ====================
+	private renderWeeklyContent(container: HTMLElement) {
+		const currentDate = moment();
+		const displayDate = this.date.clone().add(this.weekOffset, "week");
+		const dates = getDatesInWeekByDate(displayDate, this.plugin.settings.firstDayOfWeek);
 
 		// Daily note buttons
 		for (const date of dates) {
@@ -90,71 +294,307 @@ export default class DailyNoteNavbar {
 			const exists = this.plugin.timewalkService.hasDailyNote(date);
 			const stateClass = isActive ? "daily-note-navbar__active" : exists ? "daily-note-navbar__default" : "daily-note-navbar__not-exists";
 
-			const button = new ButtonComponent(this.containerEl)
+			// Tooltip: "Create YYYY-MM-DD" for missing, just date for existing
+			const tooltipText = exists
+				? date.format(this.plugin.settings.tooltipDateFormat)
+				: `Create ${date.format(this.plugin.settings.tooltipDateFormat)}`;
+
+			const button = new ButtonComponent(container)
 				.setClass("daily-note-navbar__date")
 				.setClass(stateClass)
 				.setButtonText(`${date.format(this.plugin.settings.dateFormat)} ${date.date()}`)
-				.setTooltip(`${date.format(this.plugin.settings.tooltipDateFormat)}`);
+				.setTooltip(tooltipText);
 			if (isCurrent) {
 				button.setClass("daily-note-navbar__current");
 			}
 
-			// Add click handler
 			button.buttonEl.onClickEvent((event: MouseEvent) => {
-				// Don't navigate to non-existent files
-				if (!exists) {
-					return;
-				}
-
 				const paneType = Keymap.isModEvent(event);
 				if (paneType && paneType !== true) {
 					const openType = FILE_OPEN_TYPES_TO_PANE_TYPE[paneType];
 					this.plugin.openDailyNote(date, openType);
 				} else if (event.type === "click") {
 					const openType = event.ctrlKey ? "New tab" : this.plugin.settings.defaultOpenType;
-					// Skip as it is already open
-					const isActive = this.date.format("YYYY-MM-DD") === date.format("YYYY-MM-DD");
-					if (isActive && openType === "Active") {
-						return;
-					}
+					const isActiveNote = this.date.format("YYYY-MM-DD") === date.format("YYYY-MM-DD");
+					if (isActiveNote && openType === "Active" && exists) return;
 					this.plugin.openDailyNote(date, openType);
 				} else if (event.type === "auxclick") {
 					this.createContextMenu(event, date);
 				}
 			});
 		}
+	}
 
-		// Next week button
-		new ButtonComponent(this.containerEl)
-			.setClass("daily-note-navbar__change-week")
-			.setClass("daily-note-navbar__next-week")
-			.setIcon("right-arrow")
-			.setTooltip("Next week")
-			.onClick(() => {
-				this.weekOffset++;
-				this.rerender();
-			});
+	private renderGlobalContent(container: HTMLElement) {
+		const currentDate = moment();
 
-		// ========== ROW 2: Edge dates + create buttons ==========
+		// Build timeline
+		this.globalItems = buildGlobalTimeline(
+			this.plugin.timewalkService,
+			this.date,
+			currentDate
+		);
 
-		// Spacer for week number column
-		this.containerEl.createSpan({ cls: "daily-note-navbar__spacer" });
+		// Find active item index for scroll positioning
+		const activeIndex = this.globalItems.findIndex(item => item.isActive);
 
-		// Previous edge date button
-		this.createEdgeDateButton(prevEdgeDate, prevEdgeExists, "daily-note-navbar__edge-prev");
+		// Create scroll container inside the content area
+		this.scrollContainerEl = container.createDiv({
+			cls: 'daily-note-navbar__scroll-container'
+		});
 
-		// Create buttons or spacers for each date
-		for (const date of dates) {
-			const exists = this.plugin.timewalkService.hasDailyNote(date);
-			if (!exists) {
-				this.createCreateButton(date);
+		// Render all items
+		this.globalItems.forEach((item) => {
+			if (item.type === 'note') {
+				this.renderNoteItem(item);
 			} else {
-				this.containerEl.createSpan({ cls: "daily-note-navbar__spacer" });
+				this.renderGapItem(item);
+			}
+		});
+
+		// Setup scroll behavior
+		this.setupGlobalScrollBehavior(activeIndex);
+	}
+
+	private updateFloatingHeader(referenceDate: moment.Moment) {
+		if (this.floatingHeaderEl) {
+			this.floatingHeaderEl.textContent = referenceDate.format('MMMM YYYY');
+		}
+	}
+
+	private centerOnIndex(index: number) {
+		if (!this.scrollContainerEl) return;
+		const el = this.scrollContainerEl.children[index] as HTMLElement;
+		if (el) {
+			const containerWidth = this.scrollContainerEl.offsetWidth;
+			const itemLeft = el.offsetLeft;
+			const itemWidth = el.offsetWidth;
+			this.scrollContainerEl.scrollLeft = itemLeft - (containerWidth / 2) + (itemWidth / 2);
+		}
+	}
+
+	private setupGlobalScrollBehavior(activeIndex: number) {
+		if (!this.scrollContainerEl) return;
+
+		// Detect mobile vs desktop for scroll behavior
+		const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+		// Restore saved scroll position or center on target date
+		window.requestAnimationFrame(() => {
+			if (!this.scrollContainerEl) return;
+
+			// Disable smooth scrolling for instant positioning
+			this.scrollContainerEl.style.scrollBehavior = 'auto';
+
+			if (this.savedGlobalScrollPosition !== undefined) {
+				// Restore previous scroll position (navigating within global mode)
+				this.scrollContainerEl.scrollLeft = this.savedGlobalScrollPosition;
+			} else if (this.viewportCenterDate) {
+				// Scroll to viewportCenterDate (coming from weekly mode)
+				const targetDateStr = this.viewportCenterDate.format('YYYY-MM-DD');
+				const targetIndex = this.globalItems.findIndex(item =>
+					item.date.format('YYYY-MM-DD') === targetDateStr ||
+					(item.type === 'gap' && item.date.isSameOrBefore(this.viewportCenterDate) &&
+					item.date.clone().add(item.gapCount || 0, 'days').isAfter(this.viewportCenterDate))
+				);
+				if (targetIndex !== -1) {
+					const targetEl = this.scrollContainerEl.children[targetIndex] as HTMLElement;
+					if (targetEl) {
+						const containerWidth = this.scrollContainerEl.offsetWidth;
+						const itemLeft = targetEl.offsetLeft;
+						const itemWidth = targetEl.offsetWidth;
+						this.scrollContainerEl.scrollLeft = itemLeft - (containerWidth / 2) + (itemWidth / 2);
+					}
+				} else if (activeIndex !== -1) {
+					// Fallback to active item
+					this.centerOnIndex(activeIndex);
+				}
+			} else if (activeIndex !== -1) {
+				// Initial load: center the active item
+				this.centerOnIndex(activeIndex);
+			}
+
+			// Only re-enable smooth scrolling on mobile (desktop uses JS momentum)
+			if (isMobile) {
+				window.requestAnimationFrame(() => {
+					if (this.scrollContainerEl) {
+						this.scrollContainerEl.style.scrollBehavior = 'smooth';
+					}
+				});
+			}
+		});
+
+		// Add scroll listener for floating header updates
+		this.scrollContainerEl.addEventListener('scroll', () => {
+			this.handleScroll();
+		});
+
+		if (!isMobile) {
+			let velocity = 0;
+			let isAnimating = false;
+			const friction = 0.92;
+			const sensitivity = 0.15;
+			const maxVelocity = 130;
+
+			const animateMomentum = () => {
+				if (!this.scrollContainerEl) return;
+
+				this.scrollContainerEl.scrollLeft += velocity;
+				velocity *= friction;
+
+				if (Math.abs(velocity) > 0.5) {
+					window.requestAnimationFrame(animateMomentum);
+				} else {
+					velocity = 0;
+					isAnimating = false;
+					// Snap to nearest item when momentum ends
+					this.snapToNearestItem();
+				}
+			};
+
+			this.scrollContainerEl.addEventListener('wheel', (e) => {
+				e.preventDefault();
+				velocity += e.deltaY * sensitivity;
+				velocity = Math.max(-maxVelocity, Math.min(maxVelocity, velocity));
+
+				if (!isAnimating) {
+					isAnimating = true;
+					animateMomentum();
+				}
+			}, { passive: false });
+		} else {
+			this.scrollContainerEl.addEventListener('wheel', (e) => {
+				e.preventDefault();
+				if (this.scrollContainerEl) {
+					this.scrollContainerEl.scrollLeft += e.deltaY;
+				}
+			}, { passive: false });
+		}
+	}
+
+	private snapToNearestItem() {
+		if (!this.scrollContainerEl || this.scrollContainerEl.children.length === 0) return;
+
+		const children = Array.from(this.scrollContainerEl.children) as HTMLElement[];
+		const containerLeft = this.scrollContainerEl.scrollLeft;
+
+		// Find the item closest to the left edge
+		let closestItem: HTMLElement | null = null;
+		let closestDistance = Infinity;
+
+		for (const child of children) {
+			const itemLeft = child.offsetLeft;
+			const distance = Math.abs(itemLeft - containerLeft);
+			if (distance < closestDistance) {
+				closestDistance = distance;
+				closestItem = child;
 			}
 		}
 
-		// Next edge date button
-		this.createEdgeDateButton(nextEdgeDate, nextEdgeExists, "daily-note-navbar__edge-next");
+		if (closestItem) {
+			this.scrollContainerEl.scrollTo({
+				left: closestItem.offsetLeft,
+				behavior: 'smooth'
+			});
+		}
+	}
+
+	private renderNoteItem(item: GlobalNavItem) {
+		const classes = ['daily-note-navbar__global-item', 'daily-note-navbar__global-note'];
+
+		if (item.isActive) classes.push('daily-note-navbar__active');
+		if (item.isCurrent) classes.push('daily-note-navbar__current');
+
+		const btn = new ButtonComponent(this.scrollContainerEl!)
+			.setButtonText(item.date.format('ddd DD'))
+			.setTooltip(item.date.format(this.plugin.settings.tooltipDateFormat));
+
+		// Add classes
+		classes.forEach(cls => btn.setClass(cls));
+
+		// Click handler (same as weekly mode)
+		btn.buttonEl.onClickEvent((event: MouseEvent) => {
+			const paneType = Keymap.isModEvent(event);
+			if (paneType && paneType !== true) {
+				const openType = FILE_OPEN_TYPES_TO_PANE_TYPE[paneType];
+				this.plugin.openDailyNote(item.date, openType);
+			} else if (event.type === "click") {
+				const openType = event.ctrlKey ? "New tab" : this.plugin.settings.defaultOpenType;
+				if (item.isActive && openType === "Active") return;
+				this.plugin.openDailyNote(item.date, openType);
+			} else if (event.type === "auxclick") {
+				this.createContextMenu(event, item.date);
+			}
+		});
+	}
+
+	private renderGapItem(item: GlobalNavItem) {
+		const count = item.gapCount || 0;
+
+		// Single missing day: render as gray date button (like weekly mode)
+		if (count === 1) {
+			const btn = new ButtonComponent(this.scrollContainerEl!)
+				.setButtonText(item.date.format('ddd DD'))
+				.setTooltip(`Create ${item.date.format(this.plugin.settings.tooltipDateFormat)}`);
+
+			btn.setClass('daily-note-navbar__global-item');
+			btn.setClass('daily-note-navbar__global-note');
+			btn.setClass('daily-note-navbar__global-missing');
+
+			btn.buttonEl.onClickEvent((event: MouseEvent) => {
+				const paneType = Keymap.isModEvent(event);
+				if (paneType && paneType !== true) {
+					const openType = FILE_OPEN_TYPES_TO_PANE_TYPE[paneType];
+					this.plugin.openDailyNote(item.date, openType);
+				} else if (event.type === "click") {
+					const openType = event.ctrlKey ? "New tab" : this.plugin.settings.defaultOpenType;
+					this.plugin.openDailyNote(item.date, openType);
+				}
+			});
+			return;
+		}
+
+		// 2+ missing days: show ..N.. format
+		const text = `..${count}..`;
+
+		const gapEl = this.scrollContainerEl!.createDiv({
+			cls: 'daily-note-navbar__global-item daily-note-navbar__global-gap',
+			text: text
+		});
+
+		gapEl.setAttribute('title', `${count} missing days`);
+	}
+
+	private handleScroll() {
+		if (!this.scrollContainerEl) return;
+
+		// Find which item is currently in viewport center
+		const containerRect = this.scrollContainerEl.getBoundingClientRect();
+		const centerX = containerRect.left + (containerRect.width / 2);
+
+		// Find item at center
+		for (let i = 0; i < this.scrollContainerEl.children.length; i++) {
+			const child = this.scrollContainerEl.children[i] as HTMLElement;
+			const childRect = child.getBoundingClientRect();
+
+			if (childRect.left <= centerX && childRect.right >= centerX) {
+				// This item is centered
+				const item = this.globalItems[i];
+				if (item && item.date) {
+					this.updateFloatingHeader(item.date);
+					this.updateWeekNumber(item.date);
+					this.viewportCenterDate = item.date.clone(); // Save for mode sync
+				}
+				break;
+			}
+		}
+	}
+
+	private updateWeekNumber(referenceDate: moment.Moment) {
+		if (this.weekNumberEl) {
+			const weekNumber = this.getWeekNumber(referenceDate);
+			this.weekNumberEl.textContent = `W${weekNumber}`;
+		}
 	}
 
 	createContextMenu(event: MouseEvent, date: moment.Moment) {
@@ -206,8 +646,8 @@ export default class DailyNoteNavbar {
 		}
 	}
 
-	private createEdgeDateButton(date: moment.Moment, exists: boolean, additionalClass: string): void {
-		const button = new ButtonComponent(this.containerEl)
+	private createEdgeDateButton(container: HTMLElement, date: moment.Moment, exists: boolean, additionalClass: string): void {
+		const button = new ButtonComponent(container)
 			.setClass("daily-note-navbar__edge-date")
 			.setClass(additionalClass)
 			.setButtonText(date.format("ddd DD"))
@@ -235,18 +675,4 @@ export default class DailyNoteNavbar {
 		});
 	}
 
-	private createCreateButton(date: moment.Moment): void {
-		new ButtonComponent(this.containerEl)
-			.setClass("daily-note-navbar__create-btn")
-			.setButtonText("+")
-			.setTooltip(`Create note for ${date.format(this.plugin.settings.tooltipDateFormat)}`)
-			.onClick(async () => {
-				try {
-					await this.plugin.openDailyNote(date, this.plugin.settings.defaultOpenType);
-				} catch (error) {
-					console.error('[Daily Note Navbar] Failed to create note:', error);
-					new Notice('Failed to create daily note');
-				}
-			});
-	}
 }

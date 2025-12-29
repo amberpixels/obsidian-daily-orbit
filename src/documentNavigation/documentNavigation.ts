@@ -1,4 +1,4 @@
-import { MarkdownView, moment } from "obsidian";
+import { MarkdownView, moment, setIcon } from "obsidian";
 import DailyNoteNavbarPlugin from "../main";
 
 export default class DocumentNavigation {
@@ -45,9 +45,9 @@ export default class DocumentNavigation {
 		// Create prev button if there's a previous note
 		if (prevNote) {
 			this.prevBtn = createEl('button', {
-				cls: 'doc-nav-btn doc-nav-prev',
-				text: '<'
+				cls: 'doc-nav-btn doc-nav-prev'
 			});
+			setIcon(this.prevBtn, 'chevron-left');
 			this.prevBtn.setAttribute('aria-label', 'Previous daily note');
 			this.prevBtn.onclick = () => {
 				this.plugin.openFile(prevNote, 'Active');
@@ -62,9 +62,9 @@ export default class DocumentNavigation {
 		// Create next button if there's a next note
 		if (nextNote) {
 			this.nextBtn = createEl('button', {
-				cls: 'doc-nav-btn doc-nav-next',
-				text: '>'
+				cls: 'doc-nav-btn doc-nav-next'
 			});
+			setIcon(this.nextBtn, 'chevron-right');
 			this.nextBtn.setAttribute('aria-label', 'Next daily note');
 			this.nextBtn.onclick = () => {
 				this.plugin.openFile(nextNote, 'Active');

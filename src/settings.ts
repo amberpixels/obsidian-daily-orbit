@@ -1,5 +1,5 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
-import { FirstDayOfWeek, FIRST_DAY_OF_WEEK, FileOpenType, FILE_OPEN_TYPES } from "./types";
+import { FirstDayOfWeek, FIRST_DAY_OF_WEEK, FileOpenType, FILE_OPEN_TYPES, NavbarMode, NAVBAR_MODES } from "./types";
 import { toRecord } from "./utils";
 import DailyNoteBarPlugin from "./main";
 
@@ -7,6 +7,8 @@ export interface DailyNoteNavbarSettings {
 	dateFormat: string;
 	tooltipDateFormat: string;
 	firstDayOfWeek: FirstDayOfWeek;
+	navbarMode: NavbarMode;
+	globalViewportSize: number;
 	defaultOpenType: FileOpenType;
 	setActive: boolean;
 	enableAutoMetadata: boolean;
@@ -21,6 +23,8 @@ export const DEFAULT_SETTINGS: DailyNoteNavbarSettings = {
 	dateFormat: "ddd",
 	tooltipDateFormat: "YYYY-MM-DD",
 	firstDayOfWeek: "Monday",
+	navbarMode: "weekly",
+	globalViewportSize: 10,
 	defaultOpenType: "Active",
 	setActive: true,
 	enableAutoMetadata: false,
@@ -87,6 +91,19 @@ export class DailyNoteNavbarSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.firstDayOfWeek)
 				.onChange(async (value: FirstDayOfWeek) => {
 					this.plugin.settings.firstDayOfWeek = value;
+					await this.plugin.saveSettings();
+					this.plugin.rerenderNavbars();
+				}));
+
+		// Navbar mode
+		new Setting(containerEl)
+			.setName('Navbar mode')
+			.setDesc('Display mode for daily note navigation. Weekly shows a fixed 7-day week. Global shows all daily notes in a scrollable timeline.')
+			.addDropdown(dropdown => dropdown
+				.addOptions(toRecord(NAVBAR_MODES.map((item) => item)))
+				.setValue(this.plugin.settings.navbarMode)
+				.onChange(async (value: NavbarMode) => {
+					this.plugin.settings.navbarMode = value;
 					await this.plugin.saveSettings();
 					this.plugin.rerenderNavbars();
 				}));
