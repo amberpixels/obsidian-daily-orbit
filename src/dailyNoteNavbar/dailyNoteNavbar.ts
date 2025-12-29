@@ -1,6 +1,5 @@
 import { ButtonComponent, MarkdownView, Notice, Menu, moment, Keymap } from "obsidian";
-import { getAllDailyNotes, getDailyNote } from "obsidian-daily-notes-interface";
-import { getDatesInWeekByDate, getDateFromFileName } from "../utils"; 
+import { getDatesInWeekByDate } from "../utils"; 
 import { FileOpenType } from "../types"; 
 import { FILE_OPEN_TYPES_MAPPING, FILE_OPEN_TYPES_TO_PANE_TYPE } from "./consts";
 import { getDailyNoteFile } from "../utils";
@@ -37,10 +36,12 @@ export default class DailyNoteNavbar {
 	rerender() {
 		// Update date from view if it has changed
 		const activeFile = this.view.file;
-		const fileDate = activeFile ? getDateFromFileName(activeFile.basename, this.plugin.settings.dailyNoteDateFormat) : null;
-		if (fileDate && fileDate.format("YYYY-MM-DD") !== this.date.format("YYYY-MM-DD")) {
-			this.date = fileDate;
-			this.weekOffset = 0;
+		if (activeFile) {
+			const fileDate = this.plugin.timewalkService.getDailyNoteDate(activeFile);
+			if (fileDate && fileDate.format("YYYY-MM-DD") !== this.date.format("YYYY-MM-DD")) {
+				this.date = fileDate;
+				this.weekOffset = 0;
+			}
 		}
 		this.containerEl.replaceChildren();
 
@@ -62,7 +63,7 @@ export default class DailyNoteNavbar {
 			const dateString = date.format("YYYY-MM-DD");
 			const isActive = this.date.format("YYYY-MM-DD") === dateString;
 			const isCurrent = currentDate.format("YYYY-MM-DD") === dateString;
-			const exists = getDailyNote(date, getAllDailyNotes());
+			const exists = this.plugin.timewalkService.hasDailyNote(date);
 			const stateClass = isActive ? "daily-note-navbar__active" : exists ? "daily-note-navbar__default" : "daily-note-navbar__not-exists"; 
 
 			const button = new ButtonComponent(this.containerEl)
@@ -74,8 +75,20 @@ export default class DailyNoteNavbar {
 				button.setClass("daily-note-navbar__current");
 			}
 
-			// Add context menu
+			// Disable button if file doesn't exist
+			if (!exists) {
+				button.buttonEl.style.cursor = "not-allowed";
+				button.buttonEl.style.opacity = "0.5";
+			}
+
+			// Add click handler
 			button.buttonEl.onClickEvent((event: MouseEvent) => {
+				// Don't navigate to non-existent files
+				if (!exists) {
+					console.log('[Daily Note Navbar] File does not exist for', date.format('YYYY-MM-DD'));
+					return;
+				}
+
 				const paneType = Keymap.isModEvent(event);
 				if (paneType && paneType !== true) {
 					const openType = FILE_OPEN_TYPES_TO_PANE_TYPE[paneType];

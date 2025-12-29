@@ -1,7 +1,8 @@
-import { Plugin, TFile, Notice, MarkdownView, WorkspaceLeaf } from 'obsidian';
+import { Plugin, TFile, Notice, MarkdownView, WorkspaceLeaf, moment } from 'obsidian';
 import { DailyNoteNavbarSettings, DEFAULT_SETTINGS, DailyNoteNavbarSettingTab } from './settings';
 import { FileOpenType } from './types';
-import { getDateFromFileName, getDailyNoteFile, hideChildren, showChildren, selectNavbarFromView } from './utils';
+import { getDailyNoteFile, hideChildren, showChildren, selectNavbarFromView } from './utils';
+import { TimewalkService } from './timewalkService';
 import DailyNoteNavbar from './dailyNoteNavbar/dailyNoteNavbar';
 
 /**
@@ -11,17 +12,28 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 	settings: DailyNoteNavbarSettings;
 	navbars: Record<string, DailyNoteNavbar> = {};
 	nextNavbarId = 0;
+	timewalkService: TimewalkService;
 
 	async onload() {
 		await this.loadSettings();
+		this.timewalkService = new TimewalkService(this.app.vault);
 		this.addSettingTab(new DailyNoteNavbarSettingTab(this.app, this));
 		this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf: WorkspaceLeaf) => {
 			this.addDailyNoteNavbar(leaf);
 		}));
 		this.registerEvent(this.app.workspace.on("css-change", () => this.rerenderNavbars()));
-		this.registerEvent(this.app.vault.on("create", () => this.rerenderNavbars()));
-		this.registerEvent(this.app.vault.on("rename", () => this.rerenderNavbars()));
-		this.registerEvent(this.app.vault.on("delete", () => this.rerenderNavbars()));
+		this.registerEvent(this.app.vault.on("create", () => {
+			this.timewalkService.rebuild();
+			this.rerenderNavbars();
+		}));
+		this.registerEvent(this.app.vault.on("rename", () => {
+			this.timewalkService.rebuild();
+			this.rerenderNavbars();
+		}));
+		this.registerEvent(this.app.vault.on("delete", () => {
+			this.timewalkService.rebuild();
+			this.rerenderNavbars();
+		}));
 	}
 
 	async addDailyNoteNavbar(leaf: WorkspaceLeaf) {
@@ -51,9 +63,11 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 		const navbarId = selectNavbarFromView(view);
 		const navbar = navbarId ? this.getNavbar(navbarId) : null;
 
-		// Check if file is a daily note file or a normal file
-		const fileDate = getDateFromFileName(activeFile.basename, this.settings.dailyNoteDateFormat);
-		if (!fileDate.isValid()) {
+		// Check if file is a daily note using timewalk service
+		const fileDate = this.timewalkService.getDailyNoteDate(activeFile);
+
+		if (!fileDate) {
+			// Not a daily note
 			if (navbar) {
 				this.removeNavbar(navbar.id);
 				showChildren(titleContainerEl);
@@ -94,7 +108,15 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 	}
 
 	async openDailyNote(date: moment.Moment, openType: FileOpenType) {
-		const dailyNote = await getDailyNoteFile(date);
+		// Use timewalk service to find the correct file
+		let dailyNote = this.timewalkService.findDailyNote(date);
+
+		// If not found, create it using the Daily Notes interface
+		if (!dailyNote) {
+			console.log('[Daily Note Navbar] Creating new daily note for', date.format('YYYY-MM-DD'));
+			dailyNote = await getDailyNoteFile(date);
+		}
+
 		this.openFile(dailyNote, openType);
 	}
 
