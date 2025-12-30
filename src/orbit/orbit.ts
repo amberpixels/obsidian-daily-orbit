@@ -25,6 +25,11 @@ export default class DailyOrbit {
 	viewportCenterDate?: moment.Moment; // Shared between modes for position sync
 	positionBeforeToday?: { weekOffset: number; viewportCenterDate?: moment.Moment }; // For "back" functionality
 
+	// Floating mode state
+	isFloating: boolean = false;
+	containerScrollListener?: () => void;
+	floatingScrollEl?: HTMLElement;
+
 	constructor(plugin: DailyOrbitPlugin, id: string, view: MarkdownView, parentEl: HTMLElement, date: moment.Moment) {
 		this.id = id;
 		this.date = date;
@@ -43,7 +48,12 @@ export default class DailyOrbit {
 		this.parentEl.appendChild(this.containerEl);
 
 		// Remove navbar when view unloads
-		this.view.onunload = () => this.plugin.removeNavbar(this.id);
+		this.view.onunload = () => {
+			if (this.containerScrollListener && this.floatingScrollEl) {
+				this.floatingScrollEl.removeEventListener('scroll', this.containerScrollListener);
+			}
+			this.plugin.removeNavbar(this.id);
+		};
 
 		this.rerender();
 	}
@@ -65,40 +75,98 @@ export default class DailyOrbit {
 		}
 		this.containerEl.replaceChildren();
 
-		// Row 1: Header (shared between modes)
-		this.renderHeaderRow();
-
-		// Row 2: Timeline row (toggle + < + content + >)
+		// Row 1: Timeline row (toggle + < + content + >)
 		this.renderTimelineRow();
 
-		// Row 3: Temporarily disabled
-		// if (this.mode === 'weekly') {
-		// 	this.renderAuxiliaryRow();
-		// }
+		// Row 2: Position indicator (W50, December 2025, today button)
+		this.renderPositionRow();
+
+		// Setup scroll detection for floating behavior
+		this.setupFloatingBehavior();
 	}
 
-	// ==================== ROW 1: HEADER ROW (shared) ====================
-	private renderHeaderRow() {
-		const headerRow = this.containerEl.createDiv({
-			cls: 'daily-orbit__header-row'
+	private setupFloatingBehavior() {
+		// Cleanup previous listener
+		if (this.containerScrollListener && this.floatingScrollEl) {
+			this.floatingScrollEl.removeEventListener('scroll', this.containerScrollListener);
+		}
+
+		// Try to find the scrollable container for better accuracy
+		let contentEl: HTMLElement | null = null;
+
+		// Try .view-content first
+		contentEl = this.view.containerEl.querySelector('.view-content') as HTMLElement;
+
+		// Fallback to looking for scrollable parent
+		if (!contentEl) {
+			let parent = this.containerEl.parentElement;
+			while (parent && parent !== document.body) {
+				const hasScroll = parent.scrollHeight > parent.clientHeight;
+				const overflowY = window.getComputedStyle(parent).overflowY;
+				if (hasScroll && (overflowY === 'auto' || overflowY === 'scroll')) {
+					contentEl = parent;
+					break;
+				}
+				parent = parent.parentElement;
+			}
+		}
+
+		// Store the scroll container element
+		this.floatingScrollEl = contentEl || document.body as HTMLElement;
+
+		// Create scroll handler that checks element position
+		this.containerScrollListener = () => {
+			const rect = this.containerEl.getBoundingClientRect();
+			const wasFloating = this.isFloating;
+
+			// Consider floating if the navbar is stuck at the top of the viewport
+			// Obsidian's sticky header keeps it at a small offset from top
+			this.isFloating = rect.top < 60 && rect.top >= 0;
+
+			if (wasFloating !== this.isFloating) {
+				this.updateFloatingState();
+			}
+		};
+
+		// Attach listener to the scrollable element
+		this.floatingScrollEl.addEventListener('scroll', this.containerScrollListener, { passive: true });
+
+		// Set initial state
+		const rect = this.containerEl.getBoundingClientRect();
+		this.isFloating = rect.top < 60 && rect.top >= 0;
+		this.updateFloatingState();
+	}
+
+	private updateFloatingState() {
+		if (this.isFloating) {
+			this.containerEl.addClass('daily-orbit--floating');
+		} else {
+			this.containerEl.removeClass('daily-orbit--floating');
+		}
+	}
+
+	// ==================== ROW 2: POSITION ROW (shared) ====================
+	private renderPositionRow() {
+		const positionRow = this.containerEl.createDiv({
+			cls: 'daily-orbit__position-row'
 		});
 
 		// Week number (display only)
 		const displayDate = this.date.clone().add(this.weekOffset, "week");
 		const weekNumber = this.getWeekNumber(displayDate);
-		this.weekNumberEl = headerRow.createSpan({
+		this.weekNumberEl = positionRow.createSpan({
 			cls: "daily-orbit__week-number",
 			text: `W${weekNumber}`
 		});
 
 		// Month/Year label
-		this.floatingHeaderEl = headerRow.createSpan({
+		this.floatingHeaderEl = positionRow.createSpan({
 			cls: 'daily-orbit__floating-header'
 		});
 		this.updateFloatingHeader(displayDate);
 
 		// Center to today button (smart toggle: go to today / go back)
-		const centerBtn = headerRow.createEl('button', {
+		const centerBtn = positionRow.createEl('button', {
 			cls: 'daily-orbit__header-btn',
 			attr: { 'aria-label': 'Go to today', 'title': 'Go to today (click again to go back)' }
 		});
@@ -132,7 +200,7 @@ export default class DailyOrbit {
 		});
 	}
 
-	// ==================== ROW 2: TIMELINE ROW (shared structure) ====================
+	// ==================== ROW 1: TIMELINE ROW (shared structure) ====================
 	private renderTimelineRow() {
 		const timelineRow = this.containerEl.createDiv({
 			cls: 'daily-orbit__timeline-row'
@@ -253,31 +321,6 @@ export default class DailyOrbit {
 			lastScrollTime = now;
 			this.rerender();
 		}, { passive: false });
-	}
-
-	// ==================== ROW 3: AUXILIARY ROW (weekly mode only) ====================
-	private renderAuxiliaryRow() {
-		const auxRow = this.containerEl.createDiv({
-			cls: 'daily-orbit__aux-row'
-		});
-
-		const displayDate = this.date.clone().add(this.weekOffset, "week");
-		const dates = getDatesInWeekByDate(displayDate, this.plugin.settings.firstDayOfWeek);
-
-		// Edge dates
-		const prevEdgeDate = dates[0].clone().subtract(1, 'day');
-		const nextEdgeDate = dates[6].clone().add(1, 'day');
-		const prevEdgeExists = this.plugin.timewalkService.hasDailyNote(prevEdgeDate);
-		const nextEdgeExists = this.plugin.timewalkService.hasDailyNote(nextEdgeDate);
-
-		// Previous edge date button
-		this.createEdgeDateButton(auxRow, prevEdgeDate, prevEdgeExists, "daily-orbit__edge-prev");
-
-		// Spacer between edge dates
-		auxRow.createSpan({ cls: "daily-orbit__spacer" });
-
-		// Next edge date button
-		this.createEdgeDateButton(auxRow, nextEdgeDate, nextEdgeExists, "daily-orbit__edge-next");
 	}
 
 	// ==================== CONTENT RENDERERS ====================
@@ -644,35 +687,6 @@ export default class DailyOrbit {
 			const daysSinceFirstSunday = date.diff(firstSunday, 'days');
 			return Math.floor(daysSinceFirstSunday / 7) + 1;
 		}
-	}
-
-	private createEdgeDateButton(container: HTMLElement, date: moment.Moment, exists: boolean, additionalClass: string): void {
-		const button = new ButtonComponent(container)
-			.setClass("daily-orbit__edge-date")
-			.setClass(additionalClass)
-			.setButtonText(date.format("ddd DD"))
-			.setTooltip(date.format(this.plugin.settings.tooltipDateFormat));
-
-		if (!exists) {
-			button.setClass("daily-orbit__edge-not-exists");
-		}
-
-		button.buttonEl.onClickEvent((event: MouseEvent) => {
-			if (!exists) {
-				return;
-			}
-
-			const paneType = Keymap.isModEvent(event);
-			if (paneType && paneType !== true) {
-				const openType = FILE_OPEN_TYPES_TO_PANE_TYPE[paneType];
-				this.plugin.openDailyNote(date, openType);
-			} else if (event.type === "click") {
-				const openType = event.ctrlKey ? "New tab" : this.plugin.settings.defaultOpenType;
-				this.plugin.openDailyNote(date, openType);
-			} else if (event.type === "auxclick") {
-				this.createContextMenu(event, date);
-			}
-		});
 	}
 
 }

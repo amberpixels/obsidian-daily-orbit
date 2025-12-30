@@ -1,8 +1,14 @@
 /* Override parent container height to fit navbar */
 .view-header-title-container:has(.daily-orbit) {
 	height: auto;
-	min-height: 58px;
+	min-height: 57px; /* ROW1 (33px) + ROW2 (24px) */
 	overflow: visible !important;
+	transition: min-height 0.2s ease;
+}
+
+/* Reduce height when floating (ROW2 hidden) */
+.view-header-title-container:has(.daily-orbit--floating) {
+	min-height: 33px; /* Match Obsidian's native header height */
 }
 
 /* Main navbar container */
@@ -13,7 +19,8 @@
 	width: 100%;
 	max-width: 600px;
 	position: relative;
-	background: var(--background-primary);
+	background: transparent;
+	transition: all 0.2s ease;
 }
 
 /* Shared button styles */
@@ -32,15 +39,35 @@
 	cursor: pointer;
 }
 
-/* ==================== ROW 1: HEADER ROW ==================== */
-.daily-orbit__header-row {
+/* ==================== ROW 2: POSITION ROW ==================== */
+.daily-orbit__position-row {
 	display: flex !important;
 	align-items: center;
 	justify-content: center;
 	gap: 8px;
 	padding: 0 8px;
-	min-height: 20px;
+	height: 24px;
+	min-height: 24px;
 	flex-shrink: 0;
+
+	/* Make it auto-width and centered (notch effect) */
+	width: fit-content;
+	max-width: fit-content;
+	min-width: 220px; /* Ensure longest month (September/December) + year + week + icon fits */
+	align-self: center;
+
+	/* Prevent wrapping */
+	white-space: nowrap;
+
+	/* Smooth transitions */
+	opacity: 1;
+	max-height: 24px;
+	overflow: hidden;
+	transition: opacity 0.2s ease, max-height 0.2s ease,
+	            border 0.2s ease, box-shadow 0.2s ease;
+
+	/* Background for the notch */
+	background: var(--background-primary);
 }
 
 .daily-orbit__week-number {
@@ -76,13 +103,46 @@
 	height: 14px;
 }
 
-/* ==================== ROW 2: TIMELINE ROW ==================== */
+/* Hidden when floating (scrolled down) */
+.daily-orbit--floating .daily-orbit__position-row {
+	opacity: 0;
+	max-height: 0;
+	pointer-events: none;
+
+	/* Absolutely position so it doesn't push ROW1 down */
+	position: absolute;
+	top: 33px; /* Height of ROW1 (timeline) to match Obsidian header */
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 100;
+}
+
+/* Show on hover when floating */
+.daily-orbit--floating:hover .daily-orbit__position-row {
+	opacity: 1;
+	max-height: 24px;
+	pointer-events: auto;
+}
+
+/* Notch/eyebrow borders when floating */
+.daily-orbit--floating .daily-orbit__position-row,
+.daily-orbit--floating:hover .daily-orbit__position-row {
+	border-bottom: 1px solid var(--background-modifier-border);
+	border-left: 1px solid var(--background-modifier-border);
+	border-right: 1px solid var(--background-modifier-border);
+	border-radius: 0 0 8px 8px;
+	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+/* ==================== ROW 1: TIMELINE ROW ==================== */
 .daily-orbit__timeline-row {
 	display: flex;
 	align-items: center;
 	gap: 4px;
 	width: 100%;
-	margin-top: -3px;
+	height: 33px; /* Match Obsidian's native header height */
+	min-height: 33px;
+	background: var(--background-primary);
 }
 
 /* Mode toggle button */
@@ -245,49 +305,6 @@
 	height: 26px;
 	min-width: 70px;
 	box-sizing: border-box;
-}
-
-/* ==================== ROW 3: AUXILIARY ROW ==================== */
-.daily-orbit__aux-row {
-	display: flex;
-	align-items: center;
-	gap: 2px;
-	width: 100%;
-	/* Absolute position so it doesn't affect navbar height */
-	position: absolute;
-	bottom: -14px;
-	left: 0;
-	/* Padding: toggle(24) + gap(4) + arrow(24) + gap(4) = 56px to align with content */
-	padding-left: 56px;
-	padding-right: 28px;
-	box-sizing: border-box;
-}
-
-.daily-orbit__spacer {
-	flex: 1;
-	min-height: 1px;
-}
-
-/* Edge date buttons */
-.daily-orbit__edge-date {
-	font-size: 0.75em;
-	color: var(--text-muted);
-	padding: 2px 4px;
-	min-width: auto;
-	min-height: 16px;
-	flex-shrink: 0;
-}
-.daily-orbit__edge-date:hover {
-	color: var(--text-normal);
-	background: var(--interactive-hover);
-}
-.daily-orbit__edge-date.daily-orbit__edge-not-exists {
-	opacity: 0.5;
-	cursor: not-allowed;
-}
-.daily-orbit__edge-date.daily-orbit__edge-not-exists:hover {
-	color: var(--text-muted);
-	background: transparent;
 }
 
 /* ==================== UTILITY ==================== */
