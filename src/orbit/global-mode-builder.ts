@@ -1,6 +1,6 @@
 import { moment, TFile } from 'obsidian';
-import { TimewalkService } from '../timewalkService';
-import { ObsidianFileWaypoint } from '../timewalkService';
+import { TimewalkService } from '../timewalk-service';
+import { ObsidianFileWaypoint } from '../timewalk-service';
 
 /**
  * Item types in global mode timeline

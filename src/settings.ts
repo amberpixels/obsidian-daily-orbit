@@ -1,9 +1,9 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import { FirstDayOfWeek, FIRST_DAY_OF_WEEK, FileOpenType, FILE_OPEN_TYPES, NavbarMode, NAVBAR_MODES } from "./types";
 import { toRecord } from "./utils";
-import DailyNoteBarPlugin from "./main";
+import DailyOrbitPlugin from "./main";
 
-export interface DailyNoteNavbarSettings {
+export interface DailyOrbitSettings {
 	dateFormat: string;
 	tooltipDateFormat: string;
 	firstDayOfWeek: FirstDayOfWeek;
@@ -19,7 +19,7 @@ export interface DailyNoteNavbarSettings {
 /**
  * The plugins default settings.
  */
-export const DEFAULT_SETTINGS: DailyNoteNavbarSettings = {
+export const DEFAULT_SETTINGS: DailyOrbitSettings = {
 	dateFormat: "ddd",
 	tooltipDateFormat: "YYYY-MM-DD",
 	firstDayOfWeek: "Monday",
@@ -38,10 +38,10 @@ year: {YYYY}`
 /**
  * This class is the plugins settings tab.
  */
-export class DailyNoteNavbarSettingTab extends PluginSettingTab {
-	plugin: DailyNoteBarPlugin;
+export class DailyOrbitSettingTab extends PluginSettingTab {
+	plugin: DailyOrbitPlugin;
 
-	constructor(app: App, plugin: DailyNoteBarPlugin) {
+	constructor(app: App, plugin: DailyOrbitPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -53,7 +53,7 @@ export class DailyNoteNavbarSettingTab extends PluginSettingTab {
 		// Date format
 		new Setting(containerEl)
 			.setName('Display date format')
-			.setDesc('Date format for the daily note navbar buttons.')
+			.setDesc('Date format for the daily orbit buttons.')
 			.addText(text => text
 				.setPlaceholder(DEFAULT_SETTINGS.dateFormat)
 				.setValue(this.plugin.settings.dateFormat)
@@ -85,7 +85,7 @@ export class DailyNoteNavbarSettingTab extends PluginSettingTab {
 		// First day of week
 		new Setting(containerEl)
 			.setName('First day of week')
-			.setDesc('The first day in the daily note bar.')
+			.setDesc('The first day in the daily orbit bar.')
 			.addDropdown(dropdown => dropdown
 				.addOptions(toRecord(FIRST_DAY_OF_WEEK.map((item) => item)))
 				.setValue(this.plugin.settings.firstDayOfWeek)

@@ -3,14 +3,14 @@ import { getDatesInWeekByDate } from "../utils";
 import { FileOpenType, NavbarMode } from "../types";
 import { FILE_OPEN_TYPES_MAPPING, FILE_OPEN_TYPES_TO_PANE_TYPE } from "./consts";
 import { createDailyNote } from 'obsidian-daily-notes-interface';
-import DailyNoteNavbarPlugin from "../main";
-import { buildGlobalTimeline, GlobalNavItem } from "./globalModeBuilder";
+import DailyOrbitPlugin from "../main";
+import { buildGlobalTimeline, GlobalNavItem } from "./global-mode-builder";
 
-export default class DailyNoteNavbar {
+export default class DailyOrbit {
 	id: string;
 	date: moment.Moment;
 	weekOffset = 0;
-	plugin: DailyNoteNavbarPlugin;
+	plugin: DailyOrbitPlugin;
 	containerEl: HTMLElement;
 	parentEl: HTMLElement;
 	view: MarkdownView;
@@ -25,7 +25,7 @@ export default class DailyNoteNavbar {
 	viewportCenterDate?: moment.Moment; // Shared between modes for position sync
 	positionBeforeToday?: { weekOffset: number; viewportCenterDate?: moment.Moment }; // For "back" functionality
 
-	constructor(plugin: DailyNoteNavbarPlugin, id: string, view: MarkdownView, parentEl: HTMLElement, date: moment.Moment) {
+	constructor(plugin: DailyOrbitPlugin, id: string, view: MarkdownView, parentEl: HTMLElement, date: moment.Moment) {
 		this.id = id;
 		this.date = date;
 		this.weekOffset = 0;
@@ -37,8 +37,8 @@ export default class DailyNoteNavbar {
 		this.globalItems = [];
 
 		this.containerEl = createDiv();
-		this.containerEl.addClass("daily-note-navbar");
-		this.containerEl.setAttribute("daily-note-navbar-id", this.id);
+		this.containerEl.addClass("daily-orbit");
+		this.containerEl.setAttribute("daily-orbit-id", this.id);
 		this.parentEl = parentEl;
 		this.parentEl.appendChild(this.containerEl);
 
@@ -80,26 +80,26 @@ export default class DailyNoteNavbar {
 	// ==================== ROW 1: HEADER ROW (shared) ====================
 	private renderHeaderRow() {
 		const headerRow = this.containerEl.createDiv({
-			cls: 'daily-note-navbar__header-row'
+			cls: 'daily-orbit__header-row'
 		});
 
 		// Week number (display only)
 		const displayDate = this.date.clone().add(this.weekOffset, "week");
 		const weekNumber = this.getWeekNumber(displayDate);
 		this.weekNumberEl = headerRow.createSpan({
-			cls: "daily-note-navbar__week-number",
+			cls: "daily-orbit__week-number",
 			text: `W${weekNumber}`
 		});
 
 		// Month/Year label
 		this.floatingHeaderEl = headerRow.createSpan({
-			cls: 'daily-note-navbar__floating-header'
+			cls: 'daily-orbit__floating-header'
 		});
 		this.updateFloatingHeader(displayDate);
 
 		// Center to today button (smart toggle: go to today / go back)
 		const centerBtn = headerRow.createEl('button', {
-			cls: 'daily-note-navbar__header-btn',
+			cls: 'daily-orbit__header-btn',
 			attr: { 'aria-label': 'Go to today', 'title': 'Go to today (click again to go back)' }
 		});
 		setIcon(centerBtn, 'crosshair');
@@ -135,12 +135,12 @@ export default class DailyNoteNavbar {
 	// ==================== ROW 2: TIMELINE ROW (shared structure) ====================
 	private renderTimelineRow() {
 		const timelineRow = this.containerEl.createDiv({
-			cls: 'daily-note-navbar__timeline-row'
+			cls: 'daily-orbit__timeline-row'
 		});
 
 		// Mode toggle button
 		const toggleBtn = new ButtonComponent(timelineRow)
-			.setClass('daily-note-navbar__mode-toggle')
+			.setClass('daily-orbit__mode-toggle')
 			.setIcon('list')
 			.setTooltip(this.mode === 'weekly' ? 'Switch to timeline view' : 'Switch to week view')
 			.onClick(async () => {
@@ -166,13 +166,13 @@ export default class DailyNoteNavbar {
 				this.rerender();
 			});
 		if (this.mode === 'global') {
-			toggleBtn.buttonEl.addClass('daily-note-navbar__mode-toggle--active');
+			toggleBtn.buttonEl.addClass('daily-orbit__mode-toggle--active');
 		}
 
 		// Previous button
 		new ButtonComponent(timelineRow)
-			.setClass("daily-note-navbar__nav-arrow")
-			.setClass("daily-note-navbar__nav-prev")
+			.setClass("daily-orbit__nav-arrow")
+			.setClass("daily-orbit__nav-prev")
 			.setIcon("chevron-left")
 			.setTooltip(this.mode === 'weekly' ? "Previous week" : "Scroll left")
 			.onClick(() => {
@@ -187,7 +187,7 @@ export default class DailyNoteNavbar {
 
 		// Content area (mode-specific)
 		const contentArea = timelineRow.createDiv({
-			cls: 'daily-note-navbar__content-area'
+			cls: 'daily-orbit__content-area'
 		});
 
 		if (this.mode === 'global') {
@@ -199,8 +199,8 @@ export default class DailyNoteNavbar {
 
 		// Next button
 		new ButtonComponent(timelineRow)
-			.setClass("daily-note-navbar__nav-arrow")
-			.setClass("daily-note-navbar__nav-next")
+			.setClass("daily-orbit__nav-arrow")
+			.setClass("daily-orbit__nav-next")
 			.setIcon("chevron-right")
 			.setTooltip(this.mode === 'weekly' ? "Next week" : "Scroll right")
 			.onClick(() => {
@@ -258,7 +258,7 @@ export default class DailyNoteNavbar {
 	// ==================== ROW 3: AUXILIARY ROW (weekly mode only) ====================
 	private renderAuxiliaryRow() {
 		const auxRow = this.containerEl.createDiv({
-			cls: 'daily-note-navbar__aux-row'
+			cls: 'daily-orbit__aux-row'
 		});
 
 		const displayDate = this.date.clone().add(this.weekOffset, "week");
@@ -271,13 +271,13 @@ export default class DailyNoteNavbar {
 		const nextEdgeExists = this.plugin.timewalkService.hasDailyNote(nextEdgeDate);
 
 		// Previous edge date button
-		this.createEdgeDateButton(auxRow, prevEdgeDate, prevEdgeExists, "daily-note-navbar__edge-prev");
+		this.createEdgeDateButton(auxRow, prevEdgeDate, prevEdgeExists, "daily-orbit__edge-prev");
 
 		// Spacer between edge dates
-		auxRow.createSpan({ cls: "daily-note-navbar__spacer" });
+		auxRow.createSpan({ cls: "daily-orbit__spacer" });
 
 		// Next edge date button
-		this.createEdgeDateButton(auxRow, nextEdgeDate, nextEdgeExists, "daily-note-navbar__edge-next");
+		this.createEdgeDateButton(auxRow, nextEdgeDate, nextEdgeExists, "daily-orbit__edge-next");
 	}
 
 	// ==================== CONTENT RENDERERS ====================
@@ -292,7 +292,7 @@ export default class DailyNoteNavbar {
 			const isActive = this.date.format("YYYY-MM-DD") === dateString;
 			const isCurrent = currentDate.format("YYYY-MM-DD") === dateString;
 			const exists = this.plugin.timewalkService.hasDailyNote(date);
-			const stateClass = isActive ? "daily-note-navbar__active" : exists ? "daily-note-navbar__default" : "daily-note-navbar__not-exists";
+			const stateClass = isActive ? "daily-orbit__active" : exists ? "daily-orbit__default" : "daily-orbit__not-exists";
 
 			// Tooltip: "Create YYYY-MM-DD" for missing, just date for existing
 			const tooltipText = exists
@@ -300,12 +300,12 @@ export default class DailyNoteNavbar {
 				: `Create ${date.format(this.plugin.settings.tooltipDateFormat)}`;
 
 			const button = new ButtonComponent(container)
-				.setClass("daily-note-navbar__date")
+				.setClass("daily-orbit__date")
 				.setClass(stateClass)
 				.setButtonText(`${date.format(this.plugin.settings.dateFormat)} ${date.date()}`)
 				.setTooltip(tooltipText);
 			if (isCurrent) {
-				button.setClass("daily-note-navbar__current");
+				button.setClass("daily-orbit__current");
 			}
 
 			button.buttonEl.onClickEvent((event: MouseEvent) => {
@@ -340,7 +340,7 @@ export default class DailyNoteNavbar {
 
 		// Create scroll container inside the content area
 		this.scrollContainerEl = container.createDiv({
-			cls: 'daily-note-navbar__scroll-container'
+			cls: 'daily-orbit__scroll-container'
 		});
 
 		// Render all items
@@ -500,10 +500,10 @@ export default class DailyNoteNavbar {
 	}
 
 	private renderNoteItem(item: GlobalNavItem) {
-		const classes = ['daily-note-navbar__global-item', 'daily-note-navbar__global-note'];
+		const classes = ['daily-orbit__global-item', 'daily-orbit__global-note'];
 
-		if (item.isActive) classes.push('daily-note-navbar__active');
-		if (item.isCurrent) classes.push('daily-note-navbar__current');
+		if (item.isActive) classes.push('daily-orbit__active');
+		if (item.isCurrent) classes.push('daily-orbit__current');
 
 		const btn = new ButtonComponent(this.scrollContainerEl!)
 			.setButtonText(item.date.format('ddd DD'))
@@ -537,9 +537,9 @@ export default class DailyNoteNavbar {
 				.setButtonText(item.date.format('ddd DD'))
 				.setTooltip(`Create ${item.date.format(this.plugin.settings.tooltipDateFormat)}`);
 
-			btn.setClass('daily-note-navbar__global-item');
-			btn.setClass('daily-note-navbar__global-note');
-			btn.setClass('daily-note-navbar__global-missing');
+			btn.setClass('daily-orbit__global-item');
+			btn.setClass('daily-orbit__global-note');
+			btn.setClass('daily-orbit__global-missing');
 
 			btn.buttonEl.onClickEvent((event: MouseEvent) => {
 				const paneType = Keymap.isModEvent(event);
@@ -558,7 +558,7 @@ export default class DailyNoteNavbar {
 		const text = `..${count}..`;
 
 		const gapEl = this.scrollContainerEl!.createDiv({
-			cls: 'daily-note-navbar__global-item daily-note-navbar__global-gap',
+			cls: 'daily-orbit__global-item daily-orbit__global-gap',
 			text: text
 		});
 
@@ -648,13 +648,13 @@ export default class DailyNoteNavbar {
 
 	private createEdgeDateButton(container: HTMLElement, date: moment.Moment, exists: boolean, additionalClass: string): void {
 		const button = new ButtonComponent(container)
-			.setClass("daily-note-navbar__edge-date")
+			.setClass("daily-orbit__edge-date")
 			.setClass(additionalClass)
 			.setButtonText(date.format("ddd DD"))
 			.setTooltip(date.format(this.plugin.settings.tooltipDateFormat));
 
 		if (!exists) {
-			button.setClass("daily-note-navbar__edge-not-exists");
+			button.setClass("daily-orbit__edge-not-exists");
 		}
 
 		button.buttonEl.onClickEvent((event: MouseEvent) => {

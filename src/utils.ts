@@ -30,7 +30,7 @@ export function getDatesInWeekByDate(date: moment.Moment, firstDayOfWeek: FirstD
  */
 export function hideChildren(el: HTMLElement) {
 	for (let k = 0; k < el.children.length; k++) {
-		el.children[k].addClass("daily-note-navbar__hidden");
+		el.children[k].addClass("daily-orbit__hidden");
 	}
 }
 
@@ -41,7 +41,7 @@ export function hideChildren(el: HTMLElement) {
  */
 export function showChildren(el: HTMLElement) {
 	for (let k = 0; k < el.children.length; k++) {
-		el.children[k].removeClass("daily-note-navbar__hidden");
+		el.children[k].removeClass("daily-orbit__hidden");
 	}
 }
 
@@ -64,10 +64,10 @@ export function toRecord(arr: string[]): Record<string, string> {
  * @return {string | null} The navbar id or null.
  */
 export function selectNavbarFromView(view: View): string | null {
-	const navbars = view.containerEl.getElementsByClassName("daily-note-navbar");
+	const navbars = view.containerEl.getElementsByClassName("daily-orbit");
 	if (navbars.length > 0) {
 		const navbarEl = navbars[0];
-		return navbarEl.getAttribute("daily-note-navbar-id");
+		return navbarEl.getAttribute("daily-orbit-id");
 	}
 	return null;
 }

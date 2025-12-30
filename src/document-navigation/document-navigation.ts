@@ -1,8 +1,8 @@
 import { MarkdownView, moment, setIcon } from "obsidian";
-import DailyNoteNavbarPlugin from "../main";
+import DailyOrbitPlugin from "../main";
 
 export default class DocumentNavigation {
-	plugin: DailyNoteNavbarPlugin;
+	plugin: DailyOrbitPlugin;
 	view: MarkdownView;
 	currentDate: moment.Moment;
 	prevBtn: HTMLElement | null = null;
@@ -11,7 +11,7 @@ export default class DocumentNavigation {
 	originalH1Parent: HTMLElement | null = null;
 	originalH1: HTMLElement | null = null;
 
-	constructor(plugin: DailyNoteNavbarPlugin, view: MarkdownView, date: moment.Moment) {
+	constructor(plugin: DailyOrbitPlugin, view: MarkdownView, date: moment.Moment) {
 		this.plugin = plugin;
 		this.view = view;
 		this.currentDate = date;

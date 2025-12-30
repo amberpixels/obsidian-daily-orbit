@@ -1,18 +1,18 @@
 import { Plugin, TFile, Notice, MarkdownView, WorkspaceLeaf, moment } from 'obsidian';
-import { DailyNoteNavbarSettings, DEFAULT_SETTINGS, DailyNoteNavbarSettingTab } from './settings';
+import { DailyOrbitSettings, DEFAULT_SETTINGS, DailyOrbitSettingTab } from './settings';
 import { FileOpenType } from './types';
 import { hideChildren, showChildren, selectNavbarFromView } from './utils';
-import { TimewalkService } from './timewalkService';
-import DailyNoteNavbar from './dailyNoteNavbar/dailyNoteNavbar';
-import DocumentNavigation from './documentNavigation/documentNavigation';
+import { TimewalkService } from './timewalk-service';
+import DailyOrbit from './orbit/orbit';
+import DocumentNavigation from './document-navigation/document-navigation';
 import { createDailyNote } from 'obsidian-daily-notes-interface';
 
 /**
  * This class is the actual Obsidian plugin.
  */
-export default class DailyNoteNavbarPlugin extends Plugin {
-	settings: DailyNoteNavbarSettings;
-	navbars: Record<string, DailyNoteNavbar> = {};
+export default class DailyOrbitPlugin extends Plugin {
+	settings: DailyOrbitSettings;
+	navbars: Record<string, DailyOrbit> = {};
 	nextNavbarId = 0;
 	documentNavigations: Record<string, DocumentNavigation> = {};
 	nextDocNavId = 0;
@@ -22,9 +22,9 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 		this.timewalkService = new TimewalkService(this.app.vault);
-		this.addSettingTab(new DailyNoteNavbarSettingTab(this.app, this));
+		this.addSettingTab(new DailyOrbitSettingTab(this.app, this));
 		this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf: WorkspaceLeaf) => {
-			this.addDailyNoteNavbar(leaf);
+			this.addDailyOrbit(leaf);
 			this.addDocumentNavigation(leaf);
 		}));
 		this.registerEvent(this.app.workspace.on("file-open", (file) => {
@@ -49,7 +49,7 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 		}));
 	}
 
-	async addDailyNoteNavbar(leaf: WorkspaceLeaf) {
+	async addDailyOrbit(leaf: WorkspaceLeaf) {
 		if (!this.hasDependencies()) {
 			return;
 		}
@@ -100,9 +100,9 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 		}
 	}
 
-	createNavbar(view: MarkdownView, parentEl: HTMLElement, date: moment.Moment): DailyNoteNavbar {
+	createNavbar(view: MarkdownView, parentEl: HTMLElement, date: moment.Moment): DailyOrbit {
 		const navbarId = `${this.nextNavbarId++}`;
-		const navbar = new DailyNoteNavbar(this, navbarId, view, parentEl, date);
+		const navbar = new DailyOrbit(this, navbarId, view, parentEl, date);
 		this.navbars[navbarId] = navbar;
 		return navbar;
 	}
@@ -113,7 +113,7 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 		delete this.navbars[id];
 	}
 
-	getNavbar(id: string): DailyNoteNavbar | undefined {
+	getNavbar(id: string): DailyOrbit | undefined {
 		return this.navbars[id];
 	}
 
@@ -156,9 +156,9 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 				}
 			});
 
-			console.log(`[Daily Note Navbar] Updated metadata for ${file.path}`);
+			console.log(`[Daily Orbit] Updated metadata for ${file.path}`);
 		} catch (error) {
-			console.error(`[Daily Note Navbar] Failed to update metadata for ${file.path}:`, error);
+			console.error(`[Daily Orbit] Failed to update metadata for ${file.path}:`, error);
 			// Don't show Notice - this is a background operation
 		}
 	}
@@ -316,7 +316,7 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 
 		// If not found, create it directly (bypasses buggy getDailyNote lookup)
 		if (!dailyNote) {
-			console.log('[Daily Note Navbar] Creating new daily note for', date.format('YYYY-MM-DD'));
+			console.log('[Daily Orbit] Creating new daily note for', date.format('YYYY-MM-DD'));
 			dailyNote = await createDailyNote(date);
 		}
 
@@ -360,7 +360,7 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 		const periodicNotes = this.app.plugins.getPlugin("periodic-notes");
 
 		if (!dailyNotesPlugin && !periodicNotes) {
-			new Notice("Daily Note Navbar: Install Periodic Notes or Daily Notes");
+			new Notice("Daily Orbit: Install Periodic Notes or Daily Notes");
 			return false;
 		}
 
@@ -370,7 +370,7 @@ export default class DailyNoteNavbarPlugin extends Plugin {
 			return true;
 		}
 
-		new Notice("Daily Note Navbar: Enable Periodic Notes or Daily Notes");
+		new Notice("Daily Orbit: Enable Periodic Notes or Daily Notes");
 		return false;
 	}
 

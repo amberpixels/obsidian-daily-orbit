@@ -1,7 +1,7 @@
 {
-	"name": "daily-note-navbar",
-	"version": "0.2.0",
-	"description": "Adds a daily note navbar to quickly navigate between sequential daily notes",
+	"name": "daily-orbit",
+	"version": "0.3.0",
+	"description": "Navigate between sequential daily notes with ease",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",

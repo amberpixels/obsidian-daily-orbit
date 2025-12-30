@@ -1,12 +1,12 @@
 /* Override parent container height to fit navbar */
-.view-header-title-container:has(.daily-note-navbar) {
+.view-header-title-container:has(.daily-orbit) {
 	height: auto;
 	min-height: 58px;
 	overflow: visible !important;
 }
 
 /* Main navbar container */
-.daily-note-navbar {
+.daily-orbit {
 	display: flex;
 	flex-direction: column;
 	padding: 0px;
@@ -17,7 +17,7 @@
 }
 
 /* Shared button styles */
-.daily-note-navbar button {
+.daily-orbit button {
 	padding: 0;
 	background: transparent;
 	border: 0;
@@ -27,13 +27,13 @@
 	min-height: 22px;
 	line-height: 1.3;
 }
-.daily-note-navbar button:hover {
+.daily-orbit button:hover {
 	background: var(--interactive-hover);
 	cursor: pointer;
 }
 
 /* ==================== ROW 1: HEADER ROW ==================== */
-.daily-note-navbar__header-row {
+.daily-orbit__header-row {
 	display: flex !important;
 	align-items: center;
 	justify-content: center;
@@ -43,20 +43,20 @@
 	flex-shrink: 0;
 }
 
-.daily-note-navbar__week-number {
+.daily-orbit__week-number {
 	font-size: 0.8em;
 	font-weight: 600;
 	color: var(--text-muted);
 	user-select: none;
 }
 
-.daily-note-navbar__floating-header {
+.daily-orbit__floating-header {
 	font-size: 0.85em;
 	color: var(--text-muted);
 	user-select: none;
 }
 
-.daily-note-navbar__header-btn {
+.daily-orbit__header-btn {
 	padding: 4px;
 	background: transparent;
 	border: 0;
@@ -67,17 +67,17 @@
 	align-items: center;
 	justify-content: center;
 }
-.daily-note-navbar__header-btn:hover {
+.daily-orbit__header-btn:hover {
 	background: var(--interactive-hover);
 	color: var(--text-normal);
 }
-.daily-note-navbar__header-btn svg {
+.daily-orbit__header-btn svg {
 	width: 14px;
 	height: 14px;
 }
 
 /* ==================== ROW 2: TIMELINE ROW ==================== */
-.daily-note-navbar__timeline-row {
+.daily-orbit__timeline-row {
 	display: flex;
 	align-items: center;
 	gap: 4px;
@@ -86,7 +86,7 @@
 }
 
 /* Mode toggle button */
-.daily-note-navbar__mode-toggle {
+.daily-orbit__mode-toggle {
 	padding: 4px;
 	min-width: 24px;
 	min-height: 24px;
@@ -96,37 +96,37 @@
 	color: var(--text-muted);
 	flex-shrink: 0;
 }
-.daily-note-navbar__mode-toggle svg {
+.daily-orbit__mode-toggle svg {
 	height: 16px;
 	width: 16px;
 }
-.daily-note-navbar__mode-toggle:hover {
+.daily-orbit__mode-toggle:hover {
 	background: var(--interactive-hover);
 	color: var(--text-normal);
 }
-.daily-note-navbar__mode-toggle--active {
+.daily-orbit__mode-toggle--active {
 	background: var(--interactive-accent);
 	color: var(--text-on-accent);
 }
-.daily-note-navbar__mode-toggle--active:hover {
+.daily-orbit__mode-toggle--active:hover {
 	background: var(--interactive-accent-hover);
 	color: var(--text-on-accent);
 }
 
 /* Navigation arrows */
-.daily-note-navbar__nav-arrow {
+.daily-orbit__nav-arrow {
 	padding: 4px;
 	min-width: 24px;
 	min-height: 24px;
 	flex-shrink: 0;
 }
-.daily-note-navbar__nav-arrow svg {
+.daily-orbit__nav-arrow svg {
 	height: 16px;
 	width: 16px;
 }
 
 /* Content area (between arrows) */
-.daily-note-navbar__content-area {
+.daily-orbit__content-area {
 	display: flex;
 	align-items: center;
 	gap: 2px;
@@ -138,7 +138,7 @@
 }
 
 /* Weekly mode: day buttons */
-.daily-note-navbar__date {
+.daily-orbit__date {
 	min-width: 60px;
 	height: 26px;
 	font-size: 0.9em;
@@ -146,28 +146,28 @@
 	border: 1px solid transparent;
 	box-sizing: border-box;
 }
-.daily-note-navbar button.daily-note-navbar__active {
+.daily-orbit button.daily-orbit__active {
 	color: var(--text-on-accent);
 	background: var(--interactive-accent);
 }
-.daily-note-navbar button.daily-note-navbar__active:hover {
+.daily-orbit button.daily-orbit__active:hover {
 	background: var(--interactive-accent-hover);
 }
-.daily-note-navbar__current {
+.daily-orbit__current {
 	color: var(--interactive-accent);
 }
-.daily-note-navbar button.daily-note-navbar__not-exists {
+.daily-orbit button.daily-orbit__not-exists {
 	color: var(--text-faint);
 	font-size: 0.85em;
 	cursor: pointer;
 }
-.daily-note-navbar button.daily-note-navbar__not-exists:hover {
+.daily-orbit button.daily-orbit__not-exists:hover {
 	color: var(--text-muted);
 	background: var(--interactive-hover);
 }
 
 /* Global mode: scroll container */
-.daily-note-navbar__scroll-container {
+.daily-orbit__scroll-container {
 	display: flex;
 	align-items: center;
 	gap: 4px;
@@ -178,17 +178,17 @@
 	height: 26px;
 	scrollbar-width: none; /* Hide scrollbar to match weekly mode height */
 }
-.daily-note-navbar__scroll-container::-webkit-scrollbar {
+.daily-orbit__scroll-container::-webkit-scrollbar {
 	display: none; /* Hide scrollbar for webkit */
 }
 
 /* Global mode items */
-.daily-note-navbar__global-item {
+.daily-orbit__global-item {
 	flex-shrink: 0;
 	min-width: fit-content;
 }
 
-.daily-note-navbar__global-note {
+.daily-orbit__global-note {
 	padding: 4px 8px;
 	font-size: 0.85em;
 	background: var(--interactive-normal);
@@ -200,39 +200,39 @@
 	box-sizing: border-box;
 	text-align: center;
 }
-.daily-note-navbar__global-note:hover {
+.daily-orbit__global-note:hover {
 	background: var(--interactive-hover);
 	border-color: var(--interactive-accent);
 }
-.daily-note-navbar__global-note.daily-note-navbar__active {
+.daily-orbit__global-note.daily-orbit__active {
 	background: var(--interactive-accent);
 	color: var(--text-on-accent);
 	border-color: var(--interactive-accent);
 }
-.daily-note-navbar__global-note.daily-note-navbar__active:hover {
+.daily-orbit__global-note.daily-orbit__active:hover {
 	background: var(--interactive-accent-hover);
 }
-.daily-note-navbar__global-note.daily-note-navbar__current {
+.daily-orbit__global-note.daily-orbit__current {
 	color: var(--interactive-accent);
 	font-weight: bold;
 }
-.daily-note-navbar__global-note.daily-note-navbar__current.daily-note-navbar__active {
+.daily-orbit__global-note.daily-orbit__current.daily-orbit__active {
 	color: var(--text-on-accent);
 }
 
 /* Global mode: missing single day (gray like weekly) */
-.daily-note-navbar__global-missing {
+.daily-orbit__global-missing {
 	color: var(--text-faint) !important;
 	background: transparent !important;
 	border-color: transparent !important;
 }
-.daily-note-navbar__global-missing:hover {
+.daily-orbit__global-missing:hover {
 	color: var(--text-muted) !important;
 	background: var(--interactive-hover) !important;
 }
 
 /* Global mode: gap indicator (2+ missing days) */
-.daily-note-navbar__global-gap {
+.daily-orbit__global-gap {
 	padding: 4px 8px;
 	font-size: 0.85em;
 	color: var(--text-faint);
@@ -248,7 +248,7 @@
 }
 
 /* ==================== ROW 3: AUXILIARY ROW ==================== */
-.daily-note-navbar__aux-row {
+.daily-orbit__aux-row {
 	display: flex;
 	align-items: center;
 	gap: 2px;
@@ -263,13 +263,13 @@
 	box-sizing: border-box;
 }
 
-.daily-note-navbar__spacer {
+.daily-orbit__spacer {
 	flex: 1;
 	min-height: 1px;
 }
 
 /* Edge date buttons */
-.daily-note-navbar__edge-date {
+.daily-orbit__edge-date {
 	font-size: 0.75em;
 	color: var(--text-muted);
 	padding: 2px 4px;
@@ -277,21 +277,21 @@
 	min-height: 16px;
 	flex-shrink: 0;
 }
-.daily-note-navbar__edge-date:hover {
+.daily-orbit__edge-date:hover {
 	color: var(--text-normal);
 	background: var(--interactive-hover);
 }
-.daily-note-navbar__edge-date.daily-note-navbar__edge-not-exists {
+.daily-orbit__edge-date.daily-orbit__edge-not-exists {
 	opacity: 0.5;
 	cursor: not-allowed;
 }
-.daily-note-navbar__edge-date.daily-note-navbar__edge-not-exists:hover {
+.daily-orbit__edge-date.daily-orbit__edge-not-exists:hover {
 	color: var(--text-muted);
 	background: transparent;
 }
 
 /* ==================== UTILITY ==================== */
-.daily-note-navbar__hidden {
+.daily-orbit__hidden {
 	display: none;
 }
 
