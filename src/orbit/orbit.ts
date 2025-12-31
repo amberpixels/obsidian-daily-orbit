@@ -66,8 +66,12 @@ export default class DailyOrbit {
 
 	rerender() {
 		// Save scroll position before rebuilding (for global mode)
+		// Don't save if we're explicitly jumping to a new date (viewportCenterDate set + savedGlobalScrollPosition cleared)
 		if (this.mode === 'global' && this.scrollContainerEl) {
-			this.savedGlobalScrollPosition = this.scrollContainerEl.scrollLeft;
+			const isJumpingToDate = this.viewportCenterDate && this.savedGlobalScrollPosition === undefined;
+			if (!isJumpingToDate) {
+				this.savedGlobalScrollPosition = this.scrollContainerEl.scrollLeft;
+			}
 		}
 
 		// Update date from view if it has changed
