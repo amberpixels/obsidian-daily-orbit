@@ -20,10 +20,16 @@ export default class DailyOrbit {
 	globalItems: GlobalNavItem[] = [];
 	scrollContainerEl?: HTMLElement;
 	floatingHeaderEl?: HTMLElement;
+	floatingHeaderMonthEl?: HTMLElement;
+	floatingHeaderYearEl?: HTMLElement;
 	weekNumberEl?: HTMLElement;
 	savedGlobalScrollPosition?: number;
 	viewportCenterDate?: moment.Moment; // Shared between modes for position sync
 	positionBeforeToday?: { weekOffset: number; viewportCenterDate?: moment.Moment }; // For "back" functionality
+
+	// Today button state
+	isTodayButtonVisible: boolean = true;
+	todayButtonEl?: HTMLElement;
 
 	// Floating mode state
 	isFloating: boolean = false;
@@ -159,33 +165,35 @@ export default class DailyOrbit {
 			text: `W${weekNumber}`
 		});
 
-		// Month/Year label
+		// Month/Year label (container)
 		this.floatingHeaderEl = positionRow.createSpan({
 			cls: 'daily-orbit__floating-header'
 		});
+
+		// Month (fixed width)
+		this.floatingHeaderMonthEl = this.floatingHeaderEl.createSpan({
+			cls: 'daily-orbit__floating-header-month'
+		});
+
+		// Year
+		this.floatingHeaderYearEl = this.floatingHeaderEl.createSpan({
+			cls: 'daily-orbit__floating-header-year'
+		});
+
 		this.updateFloatingHeader(displayDate);
 
 		// Center to today button (smart toggle: go to today / go back)
 		const centerBtn = positionRow.createEl('button', {
 			cls: 'daily-orbit__header-btn',
-			attr: { 'aria-label': 'Go to today', 'title': 'Go to today (click again to go back)' }
+			attr: { 'aria-label': 'Go to today', 'title': 'Go to today' }
 		});
+		this.todayButtonEl = centerBtn;
 		setIcon(centerBtn, 'crosshair');
 		centerBtn.addEventListener('click', () => {
 			const today = moment();
 			const todayWeekOffset = today.diff(this.date, 'weeks');
 
-			// Check if we're currently showing today
-			const isAtToday = this.viewportCenterDate?.isSame(today, 'day') ||
-				(this.weekOffset === todayWeekOffset && !this.viewportCenterDate);
-
-			if (isAtToday && this.positionBeforeToday) {
-				// Already at today - go back to previous position
-				this.weekOffset = this.positionBeforeToday.weekOffset;
-				this.viewportCenterDate = this.positionBeforeToday.viewportCenterDate;
-				this.savedGlobalScrollPosition = undefined;
-				this.positionBeforeToday = undefined; // Clear after using
-			} else {
+			if (!this.isTodayInViewport() || !this.positionBeforeToday) {
 				// Save current position and go to today
 				this.positionBeforeToday = {
 					weekOffset: this.weekOffset,
@@ -195,9 +203,18 @@ export default class DailyOrbit {
 				this.weekOffset = todayWeekOffset;
 				this.viewportCenterDate = today.clone();
 				this.savedGlobalScrollPosition = undefined;
+			} else {
+				// Restore saved position
+				this.weekOffset = this.positionBeforeToday.weekOffset;
+				this.viewportCenterDate = this.positionBeforeToday.viewportCenterDate;
+				this.savedGlobalScrollPosition = undefined;
+				this.positionBeforeToday = undefined;
 			}
 			this.rerender();
 		});
+
+		// Set initial visibility
+		this.updateTodayButtonVisibility();
 	}
 
 	// ==================== ROW 1: TIMELINE ROW (shared structure) ====================
@@ -400,8 +417,11 @@ export default class DailyOrbit {
 	}
 
 	private updateFloatingHeader(referenceDate: moment.Moment) {
-		if (this.floatingHeaderEl) {
-			this.floatingHeaderEl.textContent = referenceDate.format('MMMM YYYY');
+		if (this.floatingHeaderMonthEl) {
+			this.floatingHeaderMonthEl.textContent = referenceDate.format('MMMM');
+		}
+		if (this.floatingHeaderYearEl) {
+			this.floatingHeaderYearEl.textContent = referenceDate.format('YYYY');
 		}
 	}
 
@@ -492,6 +512,7 @@ export default class DailyOrbit {
 					isAnimating = false;
 					// Snap to nearest item when momentum ends
 					this.snapToNearestItem();
+					this.updateTodayButtonVisibility();
 				}
 			};
 
@@ -631,6 +652,9 @@ export default class DailyOrbit {
 				break;
 			}
 		}
+
+		// Update today button visibility based on scroll position
+		this.updateTodayButtonVisibility();
 	}
 
 	private updateWeekNumber(referenceDate: moment.Moment) {
@@ -638,6 +662,74 @@ export default class DailyOrbit {
 			const weekNumber = this.getWeekNumber(referenceDate);
 			this.weekNumberEl.textContent = `W${weekNumber}`;
 		}
+	}
+
+	private isTodayInViewport(): boolean {
+		const today = moment();
+
+		if (this.mode === 'weekly') {
+			// Check if today is in current week
+			const displayDate = this.date.clone().add(this.weekOffset, "week");
+			const dates = getDatesInWeekByDate(displayDate, this.plugin.settings.firstDayOfWeek);
+			return dates.some(date => date.isSame(today, 'day'));
+		} else {
+			// Global mode: Check if today's element is visible
+			if (!this.scrollContainerEl) return false;
+
+			const todayIndex = this.globalItems.findIndex(item =>
+				item.date.isSame(today, 'day')
+			);
+
+			if (todayIndex === -1) return false;
+
+			const todayEl = this.scrollContainerEl.children[todayIndex] as HTMLElement;
+			if (!todayEl) return false;
+
+			const containerRect = this.scrollContainerEl.getBoundingClientRect();
+			const elementRect = todayEl.getBoundingClientRect();
+
+			return elementRect.left >= containerRect.left &&
+				   elementRect.right <= containerRect.right;
+		}
+	}
+
+	private updateTodayButtonVisibility() {
+		// Show button if: today is NOT in viewport OR we have a saved position to return to
+		const shouldBeVisible = !this.isTodayInViewport() || this.positionBeforeToday !== undefined;
+
+		if (this.isTodayButtonVisible !== shouldBeVisible) {
+			this.isTodayButtonVisible = shouldBeVisible;
+
+			if (this.todayButtonEl) {
+				this.todayButtonEl.style.display = shouldBeVisible ? 'flex' : 'none';
+			}
+		}
+
+		// Update tooltip text based on what the button will do
+		this.updateTodayButtonTooltip();
+	}
+
+	private updateTodayButtonTooltip() {
+		if (!this.todayButtonEl) return;
+
+		let tooltipText: string;
+
+		// Determine what clicking the button will do (matches click handler logic)
+		if (!this.isTodayInViewport() || !this.positionBeforeToday) {
+			// Will go to today
+			tooltipText = 'Go to today';
+		} else {
+			// Will go back to saved position
+			const savedDate = this.positionBeforeToday.viewportCenterDate ||
+				this.date.clone().add(this.positionBeforeToday.weekOffset, 'week');
+			const weekNum = this.getWeekNumber(savedDate);
+			const month = savedDate.format('MMMM');
+			const year = savedDate.format('YYYY');
+			tooltipText = `Go back to W${weekNum} ${month} ${year}`;
+		}
+
+		this.todayButtonEl.setAttribute('title', tooltipText);
+		this.todayButtonEl.setAttribute('aria-label', tooltipText);
 	}
 
 	createContextMenu(event: MouseEvent, date: moment.Moment) {

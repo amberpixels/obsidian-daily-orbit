@@ -81,6 +81,18 @@
 	font-size: 0.85em;
 	color: var(--text-muted);
 	user-select: none;
+	display: flex;
+	gap: 0.3em;
+}
+
+.daily-orbit__floating-header-month {
+	display: inline-block;
+	min-width: 5.5em;
+	text-align: left;
+}
+
+.daily-orbit__floating-header-year {
+	display: inline-block;
 }
 
 .daily-orbit__header-btn {
