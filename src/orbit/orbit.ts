@@ -36,6 +36,16 @@ export default class DailyOrbit {
 	containerScrollListener?: () => void;
 	floatingScrollEl?: HTMLElement;
 
+	// Week label interactive state
+	isWeekLabelActive: boolean = false;
+	weekLabelWheelListener?: (e: WheelEvent) => void;
+	weekLabelClickOutsideListener?: (e: MouseEvent) => void;
+	weekLabelEscapeListener?: (e: KeyboardEvent) => void;
+	weekWheelOverlayEl?: HTMLElement;
+	weekWheelItemEls: HTMLElement[] = [];
+	weekWheelInitialWeekOffset?: number; // Store initial position for cancel
+	weekWheelInitialViewportDate?: moment.Moment;
+
 	constructor(plugin: DailyOrbitPlugin, id: string, view: MarkdownView, parentEl: HTMLElement, date: moment.Moment) {
 		this.id = id;
 		this.date = date;
@@ -58,6 +68,7 @@ export default class DailyOrbit {
 			if (this.containerScrollListener && this.floatingScrollEl) {
 				this.floatingScrollEl.removeEventListener('scroll', this.containerScrollListener);
 			}
+			this.cleanupWeekLabelListeners();
 			this.plugin.removeNavbar(this.id);
 		};
 
@@ -65,6 +76,9 @@ export default class DailyOrbit {
 	}
 
 	rerender() {
+		// Save active week label state before rebuilding
+		const wasWeekLabelActive = this.isWeekLabelActive;
+		
 		// Save scroll position before rebuilding (for global mode)
 		// Don't save if we're explicitly jumping to a new date (viewportCenterDate set + savedGlobalScrollPosition cleared)
 		if (this.mode === 'global' && this.scrollContainerEl) {
@@ -93,6 +107,13 @@ export default class DailyOrbit {
 
 		// Setup scroll detection for floating behavior
 		this.setupFloatingBehavior();
+
+		// Update week wheel if it was active (don't recreate it)
+		if (wasWeekLabelActive) {
+			this.weekNumberEl?.addClass('daily-orbit__week-number--active');
+			this.weekNumberEl?.addClass('daily-orbit__week-number--hidden');
+			this.updateWeekWheelOverlay();
+		}
 	}
 
 	private setupFloatingBehavior() {
@@ -167,6 +188,12 @@ export default class DailyOrbit {
 		this.weekNumberEl = positionRow.createSpan({
 			cls: "daily-orbit__week-number",
 			text: `W${weekNumber}`
+		});
+
+		// Make week number interactive
+		this.weekNumberEl.addEventListener('click', (e) => {
+			e.stopPropagation();
+			this.activateWeekLabel();
 		});
 
 		// Month/Year label (container)
@@ -782,6 +809,246 @@ export default class DailyOrbit {
 			}
 			const daysSinceFirstSunday = date.diff(firstSunday, 'days');
 			return Math.floor(daysSinceFirstSunday / 7) + 1;
+		}
+	}
+
+	// ==================== WEEK LABEL INTERACTIVE FEATURE ====================
+	private activateWeekLabel() {
+		// Clean up old listeners if they exist (in case of rerender)
+		if (this.isWeekLabelActive) {
+			this.cleanupWeekLabelListeners();
+		}
+		
+		// Save initial state for potential cancel
+		this.weekWheelInitialWeekOffset = this.weekOffset;
+		this.weekWheelInitialViewportDate = this.viewportCenterDate?.clone();
+		
+		this.isWeekLabelActive = true;
+		this.weekNumberEl?.addClass('daily-orbit__week-number--active');
+		this.weekNumberEl?.addClass('daily-orbit__week-number--hidden'); // Hide the text while tooltip is shown
+		
+		// Create wheel overlay
+		this.createWeekWheelOverlay();
+		
+		// Setup wheel listener on the overlay (not the small label)
+		this.weekLabelWheelListener = (e: WheelEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			
+			// Determine scroll direction (positive = down/right, negative = up/left)
+			const delta = e.deltaY || e.deltaX;
+			if (Math.abs(delta) < 5) return; // Ignore tiny movements
+			
+			// Scroll forward or backward by one week
+			if (delta > 0) {
+				this.navigateWeek(1);
+			} else {
+				this.navigateWeek(-1);
+			}
+		};
+		
+		this.weekWheelOverlayEl?.addEventListener('wheel', this.weekLabelWheelListener, { passive: false });
+		
+		// Setup click outside listener (cancel)
+		this.weekLabelClickOutsideListener = (e: MouseEvent) => {
+			if (!this.weekWheelOverlayEl?.contains(e.target as Node) && 
+			    !this.weekNumberEl?.contains(e.target as Node)) {
+				this.cancelWeekLabelChanges();
+			}
+		};
+		
+		// Small delay to prevent immediate deactivation from the same click
+		setTimeout(() => {
+			document.addEventListener('click', this.weekLabelClickOutsideListener!);
+		}, 10);
+		
+		// Setup escape key listener (cancel)
+		this.weekLabelEscapeListener = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') {
+				this.cancelWeekLabelChanges();
+			}
+		};
+		document.addEventListener('keydown', this.weekLabelEscapeListener);
+	}
+	
+	private createWeekWheelOverlay() {
+		// Remove existing overlay if any
+		this.weekWheelOverlayEl?.remove();
+		
+		if (!this.weekNumberEl) return;
+		
+		// Get week label position
+		const rect = this.weekNumberEl.getBoundingClientRect();
+		
+		// Create backdrop (transparent, just darkens document content)
+		const backdrop = document.body.createDiv({
+			cls: 'daily-orbit__week-wheel-backdrop'
+		});
+		
+		// Create wheel container positioned at week label
+		this.weekWheelOverlayEl = backdrop.createDiv({
+			cls: 'daily-orbit__week-wheel'
+		});
+		
+		// Set initial position (will be adjusted after content is added)
+		this.weekWheelOverlayEl.style.position = 'fixed';
+		this.weekWheelOverlayEl.style.visibility = 'hidden';
+		this.weekWheelOverlayEl.style.top = `${rect.top}px`;
+		
+		// Create 3 week items (previous 1, current, next 1)
+		this.weekWheelItemEls = [];
+		const displayDate = this.date.clone().add(this.weekOffset, "week");
+		
+		for (let offset = -1; offset <= 1; offset++) {
+			const weekDate = displayDate.clone().add(offset, 'week');
+			const weekNum = this.getWeekNumber(weekDate);
+			
+			const item = this.weekWheelOverlayEl.createDiv({
+				cls: 'daily-orbit__week-wheel-item',
+				text: `W${weekNum}`
+			});
+			
+			if (offset === 0) {
+				item.addClass('daily-orbit__week-wheel-item--current');
+			}
+			
+			// Add click handler to commit selection
+			item.addEventListener('click', (e) => {
+				e.stopPropagation();
+				this.commitWeekLabelChanges();
+			});
+			
+			this.weekWheelItemEls.push(item);
+		}
+		
+		// Position wheel centered on the week label (after DOM is ready and laid out)
+		requestAnimationFrame(() => {
+			if (!this.weekWheelOverlayEl) return;
+			const wheelRect = this.weekWheelOverlayEl.getBoundingClientRect();
+			const centerX = rect.left + (rect.width / 2) - (wheelRect.width / 2);
+			
+			this.weekWheelOverlayEl.style.left = `${centerX}px`;
+			this.weekWheelOverlayEl.style.visibility = 'visible';
+		});
+	}
+	
+	private updateWeekWheelOverlay() {
+		if (!this.weekWheelOverlayEl) return;
+		
+		// Update all 3 week numbers
+		const displayDate = this.date.clone().add(this.weekOffset, "week");
+		
+		for (let i = 0; i < 3; i++) {
+			const offset = i - 1; // -1, 0, 1
+			const weekDate = displayDate.clone().add(offset, 'week');
+			const weekNum = this.getWeekNumber(weekDate);
+			const newText = `W${weekNum}`;
+			
+			if (this.weekWheelItemEls[i]) {
+				// Only update text if it changed
+				if (this.weekWheelItemEls[i].getText() !== newText) {
+					this.weekWheelItemEls[i].setText(newText);
+				}
+				
+				// Update current class
+				const isCurrent = (offset === 0);
+				const hasCurrent = this.weekWheelItemEls[i].hasClass('daily-orbit__week-wheel-item--current');
+				
+				if (isCurrent && !hasCurrent) {
+					this.weekWheelItemEls[i].addClass('daily-orbit__week-wheel-item--current');
+				} else if (!isCurrent && hasCurrent) {
+					this.weekWheelItemEls[i].removeClass('daily-orbit__week-wheel-item--current');
+				}
+			}
+		}
+	}
+	
+	private deactivateWeekLabel() {
+		if (!this.isWeekLabelActive) return;
+		
+		this.isWeekLabelActive = false;
+		this.weekNumberEl?.removeClass('daily-orbit__week-number--active');
+		this.weekNumberEl?.removeClass('daily-orbit__week-number--hidden'); // Show the text again
+		
+		// Remove wheel overlay and backdrop
+		if (this.weekWheelOverlayEl) {
+			const backdrop = this.weekWheelOverlayEl.parentElement;
+			backdrop?.remove();
+			this.weekWheelOverlayEl = undefined;
+			this.weekWheelItemEls = [];
+		}
+		
+		// Clear saved state
+		this.weekWheelInitialWeekOffset = undefined;
+		this.weekWheelInitialViewportDate = undefined;
+		
+		this.cleanupWeekLabelListeners();
+	}
+	
+	private cancelWeekLabelChanges() {
+		// Restore initial position
+		if (this.weekWheelInitialWeekOffset !== undefined) {
+			this.weekOffset = this.weekWheelInitialWeekOffset;
+		}
+		if (this.weekWheelInitialViewportDate) {
+			this.viewportCenterDate = this.weekWheelInitialViewportDate;
+		}
+		this.savedGlobalScrollPosition = undefined;
+		
+		// Rerender to show the restored position
+		const wasActive = this.isWeekLabelActive;
+		this.deactivateWeekLabel();
+		
+		if (wasActive) {
+			this.rerender();
+		}
+	}
+	
+	private commitWeekLabelChanges() {
+		// Just close the wheel, keeping the current position
+		this.deactivateWeekLabel();
+	}
+	
+	private cleanupWeekLabelListeners() {
+		if (this.weekLabelWheelListener && this.weekWheelOverlayEl) {
+			this.weekWheelOverlayEl.removeEventListener('wheel', this.weekLabelWheelListener);
+			this.weekLabelWheelListener = undefined;
+		}
+		
+		if (this.weekLabelClickOutsideListener) {
+			document.removeEventListener('click', this.weekLabelClickOutsideListener);
+			this.weekLabelClickOutsideListener = undefined;
+		}
+		
+		if (this.weekLabelEscapeListener) {
+			document.removeEventListener('keydown', this.weekLabelEscapeListener);
+			this.weekLabelEscapeListener = undefined;
+		}
+	}
+	
+	private navigateWeek(direction: number) {
+		// Clear any saved position for "back to previous" functionality
+		this.positionBeforeToday = undefined;
+		
+		if (this.mode === 'weekly') {
+			// Weekly mode: adjust weekOffset
+			this.weekOffset += direction;
+			this.updateWeekWheelOverlay();
+			this.rerender();
+		} else {
+			// Global mode: calculate new viewport center date and scroll to it
+			const currentCenter = this.viewportCenterDate || this.date.clone().add(this.weekOffset, "week");
+			const newCenter = currentCenter.clone().add(direction, 'week');
+			
+			this.viewportCenterDate = newCenter;
+			this.weekOffset += direction;
+			this.savedGlobalScrollPosition = undefined; // Force scroll to new position
+			
+			// Update spinner immediately (before rerender)
+			this.updateWeekWheelOverlay();
+			
+			// Rerender to apply the scroll
+			this.rerender();
 		}
 	}
 

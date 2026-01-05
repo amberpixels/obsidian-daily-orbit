@@ -21,11 +21,14 @@ export default [
 				navigator: 'readonly',
 				process: 'readonly',
 				NodeJS: 'readonly',
+				requestAnimationFrame: 'readonly',
 				// DOM types
 				HTMLElement: 'readonly',
 				MouseEvent: 'readonly',
 				KeyboardEvent: 'readonly',
+				WheelEvent: 'readonly',
 				Element: 'readonly',
+				Node: 'readonly',
 				// Obsidian API globals
 				createDiv: 'readonly',
 				createEl: 'readonly',

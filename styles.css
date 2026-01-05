@@ -60,9 +60,10 @@
 	white-space: nowrap;
 
 	/* Smooth transitions */
-	opacity: 1;
-	max-height: 24px;
+	opacity: 0;
+	max-height: 0;
 	overflow: hidden;
+	pointer-events: none;
 	transition: opacity 0.2s ease, max-height 0.2s ease,
 	            border 0.2s ease, box-shadow 0.2s ease;
 
@@ -70,11 +71,138 @@
 	background: var(--background-primary);
 }
 
+/* Show position row on hover */
+.daily-orbit:hover .daily-orbit__position-row {
+	opacity: 1;
+	max-height: 24px;
+	pointer-events: auto;
+}
+
+/* Keep notch visible when week wheel is active (no transition to avoid blinking) */
+.daily-orbit__position-row:has(.daily-orbit__week-number--active) {
+	opacity: 1 !important;
+	max-height: 24px !important;
+	pointer-events: auto !important;
+	transition: none !important;
+}
+
 .daily-orbit__week-number {
 	font-size: 0.8em;
 	font-weight: 600;
 	color: var(--text-muted);
 	user-select: none;
+	cursor: pointer;
+	padding: 2px 6px;
+	border-radius: 4px;
+	transition: all 0.15s ease;
+}
+
+.daily-orbit__week-number:hover {
+	background: var(--interactive-hover);
+	color: var(--text-normal);
+}
+
+.daily-orbit__week-number--active {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	transform: translateY(-2px);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+	cursor: ns-resize;
+}
+
+.daily-orbit__week-number--hidden {
+	color: transparent !important;
+	background: transparent !important;
+	box-shadow: none !important;
+}
+
+/* ==================== WEEK WHEEL OVERLAY ==================== */
+.daily-orbit__week-wheel-backdrop {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: transparent;
+	z-index: 999;
+	pointer-events: none;
+	animation: fadeIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+.daily-orbit__week-wheel {
+	/* Position is set dynamically via JS */
+	width: auto;
+	min-width: 60px;
+	height: auto;
+	background: var(--background-primary);
+	opacity: 0.6;
+	backdrop-filter: blur(4px);
+	border: none;
+	border-radius: 6px;
+	box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 1px;
+	padding: 4px 10px;
+	cursor: ns-resize;
+	user-select: none;
+	pointer-events: auto;
+	z-index: 1001;
+	animation: scaleIn 0.15s ease-out;
+	transform-origin: center center;
+}
+
+@keyframes scaleIn {
+	from {
+		transform: scale(0.9);
+		opacity: 0;
+	}
+	to {
+		transform: scale(1);
+		opacity: 1;
+	}
+}
+
+.daily-orbit__week-wheel-item {
+	font-weight: 500;
+	color: var(--text-muted);
+	transition: all 0.15s ease-out;
+	text-align: center;
+	min-height: 16px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	white-space: nowrap;
+}
+
+/* Adjacent weeks (±1) */
+.daily-orbit__week-wheel-item:nth-child(1),
+.daily-orbit__week-wheel-item:nth-child(3) {
+	font-size: 12px;
+	opacity: 0.4;
+	transform: scale(0.9);
+}
+
+/* Current week (center) */
+.daily-orbit__week-wheel-item--current {
+	font-size: 22px !important;
+	font-weight: 700 !important;
+	color: var(--interactive-accent) !important;
+	opacity: 1 !important;
+	transform: scale(1) !important;
+	text-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+	padding: 1px 0;
 }
 
 .daily-orbit__floating-header {
@@ -129,8 +257,9 @@
 	z-index: 100;
 }
 
-/* Show on hover when floating */
-.daily-orbit--floating:hover .daily-orbit__position-row {
+/* Show on hover when floating, or when week wheel is active */
+.daily-orbit--floating:hover .daily-orbit__position-row,
+.daily-orbit--floating .daily-orbit__position-row:has(.daily-orbit__week-number--active) {
 	opacity: 1;
 	max-height: 24px;
 	pointer-events: auto;
