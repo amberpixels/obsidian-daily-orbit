@@ -485,3 +485,98 @@
 	width: 16px;
 	height: 16px;
 }
+
+/* ==================== Settings: Calendar Sections ==================== */
+
+.daily-orbit-calendar-section {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	margin-bottom: 12px;
+}
+
+/* Summary row (always visible) */
+.daily-orbit-calendar-section__summary {
+	display: flex;
+	align-items: center;
+	padding: 8px 12px;
+	cursor: pointer;
+	list-style: none; /* hide default marker */
+	user-select: none;
+	border-radius: 8px;
+}
+
+.daily-orbit-calendar-section__summary::-webkit-details-marker {
+	display: none;
+}
+
+/* Disclosure triangle via CSS */
+.daily-orbit-calendar-section__summary::before {
+	content: "";
+	display: inline-block;
+	width: 0;
+	height: 0;
+	margin-right: 8px;
+	border-top: 5px solid transparent;
+	border-bottom: 5px solid transparent;
+	border-left: 6px solid var(--text-muted);
+	flex-shrink: 0;
+	transition: transform 100ms ease;
+}
+
+.daily-orbit-calendar-section[open] > .daily-orbit-calendar-section__summary::before {
+	transform: rotate(90deg);
+}
+
+.daily-orbit-calendar-section__summary:hover {
+	background: var(--background-modifier-hover);
+}
+
+/* Label: name + badge */
+.daily-orbit-calendar-section__label {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: 1;
+	font-weight: var(--font-semibold, 600);
+}
+
+.daily-orbit-calendar-section__badge {
+	font-size: var(--font-ui-smaller);
+	font-weight: normal;
+	color: var(--text-muted);
+}
+
+/* Controls area in summary (toggle, delete) */
+.daily-orbit-calendar-section__controls {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.daily-orbit-calendar-section__controls .setting-item {
+	border: none;
+	padding: 0;
+}
+
+/* Body (collapsible content) */
+.daily-orbit-calendar-section__body {
+	padding: 0 12px 4px;
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+.daily-orbit-calendar-section__body .setting-item:last-child {
+	border-bottom: none;
+}
+
+/* ==================== Unconfigured Calendar Banner ==================== */
+
+.daily-orbit-unconfigured-banner {
+	padding: 6px 12px;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+}
+
+.daily-orbit-unconfigured-banner a {
+	color: var(--text-accent);
+	cursor: pointer;
+}

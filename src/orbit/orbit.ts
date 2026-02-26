@@ -1,6 +1,6 @@
 import { ButtonComponent, MarkdownView, Notice, Menu, moment, Keymap, setIcon } from "obsidian";
 import { getDatesInWeekByDate } from "../utils";
-import { FileOpenType, NavbarMode } from "../types";
+import { CalendarSource, FileOpenType, NavbarMode } from "../types";
 import { FILE_OPEN_TYPES_MAPPING, FILE_OPEN_TYPES_TO_PANE_TYPE } from "./consts";
 import { createDailyNote } from 'obsidian-daily-notes-interface';
 import DailyOrbitPlugin from "../main";
@@ -8,6 +8,7 @@ import { buildGlobalTimeline, GlobalNavItem } from "./global-mode-builder";
 
 export default class DailyOrbit {
 	id: string;
+	calendarId: string;
 	date: moment.Moment;
 	weekOffset = 0;
 	plugin: DailyOrbitPlugin;
@@ -46,15 +47,22 @@ export default class DailyOrbit {
 	weekWheelInitialWeekOffset?: number; // Store initial position for cancel
 	weekWheelInitialViewportDate?: moment.Moment;
 
-	constructor(plugin: DailyOrbitPlugin, id: string, view: MarkdownView, parentEl: HTMLElement, date: moment.Moment) {
+	/** Get the calendar source for this orbit */
+	private getCalendar(): CalendarSource | undefined {
+		return this.plugin.getCalendar(this.calendarId);
+	}
+
+	constructor(plugin: DailyOrbitPlugin, id: string, view: MarkdownView, parentEl: HTMLElement, date: moment.Moment, calendarId: string) {
 		this.id = id;
+		this.calendarId = calendarId;
 		this.date = date;
 		this.weekOffset = 0;
 		this.plugin = plugin;
 		this.view = view;
 
-		// Initialize mode from settings
-		this.mode = plugin.settings.navbarMode;
+		// Initialize mode from per-calendar settings
+		const calendar = this.getCalendar();
+		this.mode = calendar?.navbarMode ?? "weekly";
 		this.globalItems = [];
 
 		this.containerEl = createDiv();
@@ -91,9 +99,9 @@ export default class DailyOrbit {
 		// Update date from view if it has changed
 		const activeFile = this.view.file;
 		if (activeFile) {
-			const fileDate = this.plugin.timewalkService.getDailyNoteDate(activeFile);
-			if (fileDate && fileDate.format("YYYY-MM-DD") !== this.date.format("YYYY-MM-DD")) {
-				this.date = fileDate;
+			const noteInfo = this.plugin.timewalkService.getDailyNoteInfo(activeFile);
+			if (noteInfo && noteInfo.calendarId === this.calendarId && noteInfo.date.format("YYYY-MM-DD") !== this.date.format("YYYY-MM-DD")) {
+				this.date = noteInfo.date;
 				this.weekOffset = 0;
 			}
 		}
@@ -262,7 +270,10 @@ export default class DailyOrbit {
 			.onClick(async () => {
 				const oldMode = this.mode;
 				this.mode = this.mode === 'weekly' ? 'global' : 'weekly';
-				this.plugin.settings.navbarMode = this.mode;
+				const calendar = this.getCalendar();
+				if (calendar) {
+					calendar.navbarMode = this.mode;
+				}
 				await this.plugin.saveSettings();
 
 				// Sync position between modes
@@ -375,25 +386,25 @@ export default class DailyOrbit {
 	private renderWeeklyContent(container: HTMLElement) {
 		const currentDate = moment();
 		const displayDate = this.date.clone().add(this.weekOffset, "week");
-		const dates = getDatesInWeekByDate(displayDate, this.plugin.settings.firstDayOfWeek);
+		const dates = getDatesInWeekByDate(displayDate, (this.getCalendar()?.firstDayOfWeek ?? "Monday"));
 
 		// Daily note buttons
 		for (const date of dates) {
 			const dateString = date.format("YYYY-MM-DD");
 			const isActive = this.date.format("YYYY-MM-DD") === dateString;
 			const isCurrent = currentDate.format("YYYY-MM-DD") === dateString;
-			const exists = this.plugin.timewalkService.hasDailyNote(date);
+			const exists = this.plugin.timewalkService.hasDailyNote(date, this.calendarId);
 			const stateClass = isActive ? "daily-orbit__active" : exists ? "daily-orbit__default" : "daily-orbit__not-exists";
 
 			// Tooltip: "Create YYYY-MM-DD" for missing, just date for existing
 			const tooltipText = exists
-				? date.format(this.plugin.settings.tooltipDateFormat)
-				: `Create ${date.format(this.plugin.settings.tooltipDateFormat)}`;
+				? date.format((this.getCalendar()?.tooltipDateFormat ?? "YYYY-MM-DD"))
+				: `Create ${date.format((this.getCalendar()?.tooltipDateFormat ?? "YYYY-MM-DD"))}`;
 
 			const button = new ButtonComponent(container)
 				.setClass("daily-orbit__date")
 				.setClass(stateClass)
-				.setButtonText(`${date.format(this.plugin.settings.dateFormat)} ${date.date()}`)
+				.setButtonText(`${date.format((this.getCalendar()?.dateFormat ?? "ddd"))} ${date.date()}`)
 				.setTooltip(tooltipText);
 			if (isCurrent) {
 				button.setClass("daily-orbit__current");
@@ -403,12 +414,12 @@ export default class DailyOrbit {
 				const paneType = Keymap.isModEvent(event);
 				if (paneType && paneType !== true) {
 					const openType = FILE_OPEN_TYPES_TO_PANE_TYPE[paneType];
-					this.plugin.openDailyNote(date, openType);
+					this.plugin.openDailyNote(date, openType, this.calendarId);
 				} else if (event.type === "click") {
 					const openType = event.ctrlKey ? "New tab" : this.plugin.settings.defaultOpenType;
 					const isActiveNote = this.date.format("YYYY-MM-DD") === date.format("YYYY-MM-DD");
 					if (isActiveNote && openType === "Active" && exists) return;
-					this.plugin.openDailyNote(date, openType);
+					this.plugin.openDailyNote(date, openType, this.calendarId);
 				} else if (event.type === "auxclick") {
 					this.createContextMenu(event, date);
 				}
@@ -422,6 +433,7 @@ export default class DailyOrbit {
 		// Build timeline
 		this.globalItems = buildGlobalTimeline(
 			this.plugin.timewalkService,
+			this.calendarId,
 			this.date,
 			currentDate
 		);
@@ -602,7 +614,7 @@ export default class DailyOrbit {
 
 		const btn = new ButtonComponent(this.scrollContainerEl!)
 			.setButtonText(item.date.format('ddd DD'))
-			.setTooltip(item.date.format(this.plugin.settings.tooltipDateFormat));
+			.setTooltip(item.date.format((this.getCalendar()?.tooltipDateFormat ?? "YYYY-MM-DD")));
 
 		// Add classes
 		classes.forEach(cls => btn.setClass(cls));
@@ -612,11 +624,11 @@ export default class DailyOrbit {
 			const paneType = Keymap.isModEvent(event);
 			if (paneType && paneType !== true) {
 				const openType = FILE_OPEN_TYPES_TO_PANE_TYPE[paneType];
-				this.plugin.openDailyNote(item.date, openType);
+				this.plugin.openDailyNote(item.date, openType, this.calendarId);
 			} else if (event.type === "click") {
 				const openType = event.ctrlKey ? "New tab" : this.plugin.settings.defaultOpenType;
 				if (item.isActive && openType === "Active") return;
-				this.plugin.openDailyNote(item.date, openType);
+				this.plugin.openDailyNote(item.date, openType, this.calendarId);
 			} else if (event.type === "auxclick") {
 				this.createContextMenu(event, item.date);
 			}
@@ -630,7 +642,7 @@ export default class DailyOrbit {
 		if (count === 1) {
 			const btn = new ButtonComponent(this.scrollContainerEl!)
 				.setButtonText(item.date.format('ddd DD'))
-				.setTooltip(`Create ${item.date.format(this.plugin.settings.tooltipDateFormat)}`);
+				.setTooltip(`Create ${item.date.format((this.getCalendar()?.tooltipDateFormat ?? "YYYY-MM-DD"))}`);
 
 			btn.setClass('daily-orbit__global-item');
 			btn.setClass('daily-orbit__global-note');
@@ -640,10 +652,10 @@ export default class DailyOrbit {
 				const paneType = Keymap.isModEvent(event);
 				if (paneType && paneType !== true) {
 					const openType = FILE_OPEN_TYPES_TO_PANE_TYPE[paneType];
-					this.plugin.openDailyNote(item.date, openType);
+					this.plugin.openDailyNote(item.date, openType, this.calendarId);
 				} else if (event.type === "click") {
 					const openType = event.ctrlKey ? "New tab" : this.plugin.settings.defaultOpenType;
-					this.plugin.openDailyNote(item.date, openType);
+					this.plugin.openDailyNote(item.date, openType, this.calendarId);
 				}
 			});
 			return;
@@ -701,7 +713,7 @@ export default class DailyOrbit {
 		if (this.mode === 'weekly') {
 			// Check if today is in current week
 			const displayDate = this.date.clone().add(this.weekOffset, "week");
-			const dates = getDatesInWeekByDate(displayDate, this.plugin.settings.firstDayOfWeek);
+			const dates = getDatesInWeekByDate(displayDate, (this.getCalendar()?.firstDayOfWeek ?? "Monday"));
 			return dates.some(date => date.isSame(today, 'day'));
 		} else {
 			// Global mode: Check if today's element is visible
@@ -782,7 +794,7 @@ export default class DailyOrbit {
 			.setTitle("Copy Obsidian URL")
 			.onClick(async () => {
 				// Try to find existing file first, otherwise create it
-				let dailyNote = this.plugin.timewalkService.findDailyNote(date);
+				let dailyNote = this.plugin.timewalkService.findDailyNote(date, this.calendarId);
 				if (!dailyNote) {
 					dailyNote = await createDailyNote(date);
 				}
@@ -798,7 +810,7 @@ export default class DailyOrbit {
 	}
 
 	private getWeekNumber(date: moment.Moment): number {
-		if (this.plugin.settings.firstDayOfWeek === "Monday") {
+		if ((this.getCalendar()?.firstDayOfWeek ?? "Monday") === "Monday") {
 			return date.week(); // ISO week (Monday-based)
 		} else {
 			// Sunday-based: calculate weeks from first Sunday of year

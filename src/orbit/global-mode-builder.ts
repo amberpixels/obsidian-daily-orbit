@@ -25,20 +25,25 @@ export type GlobalNavItem = {
  * 5. Result: Interleaved array of notes and gaps
  *
  * @param timewalkService - Service for accessing daily notes
+ * @param calendarId - Calendar to build timeline for
  * @param activeDate - Currently active daily note date
  * @param currentDate - Today's date
  * @returns Array of timeline items
  */
 export function buildGlobalTimeline(
 	timewalkService: TimewalkService,
+	calendarId: string,
 	activeDate: moment.Moment,
 	currentDate: moment.Moment
 ): GlobalNavItem[] {
 	const items: GlobalNavItem[] = [];
 
 	// Get all daily note waypoints chronologically (oldest first)
+	const timewalk = timewalkService.getTimewalk(calendarId);
+	if (!timewalk) return items;
+
 	const waypoints: ObsidianFileWaypoint[] = [];
-	timewalkService.getTimewalk().traverse((waypoint) => {
+	timewalk.traverse((waypoint) => {
 		waypoints.push(waypoint as ObsidianFileWaypoint);
 	}, { direction: 'future', filter: 'leaves' });
 

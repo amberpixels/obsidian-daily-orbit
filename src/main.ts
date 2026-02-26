@@ -1,6 +1,6 @@
 import { Plugin, TFile, Notice, MarkdownView, WorkspaceLeaf, moment } from 'obsidian';
-import { DailyOrbitSettings, DEFAULT_SETTINGS, DailyOrbitSettingTab } from './settings';
-import { FileOpenType } from './types';
+import { DailyOrbitSettings, DEFAULT_SETTINGS, DailyOrbitSettingTab, migrateSettings, createDefaultDailyNotesCalendar } from './settings';
+import { CalendarSource, FileOpenType } from './types';
 import { hideChildren, showChildren, selectNavbarFromView } from './utils';
 import { TimewalkService } from './timewalk-service';
 import DailyOrbit from './orbit/orbit';
@@ -22,6 +22,8 @@ export default class DailyOrbitPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 		this.timewalkService = new TimewalkService(this.app.vault);
+		this.ensureDefaultCalendar();
+		this.timewalkService.rebuild(this.settings.calendars);
 		this.addSettingTab(new DailyOrbitSettingTab(this.app, this));
 		this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf: WorkspaceLeaf) => {
 			this.addDailyOrbit(leaf);
@@ -36,24 +38,74 @@ export default class DailyOrbitPlugin extends Plugin {
 		}));
 		this.registerEvent(this.app.workspace.on("css-change", () => this.rerenderNavbars()));
 		this.registerEvent(this.app.vault.on("create", () => {
-			this.timewalkService.rebuild();
+			this.timewalkService.rebuild(this.settings.calendars);
 			this.rerenderNavbars();
 		}));
 		this.registerEvent(this.app.vault.on("rename", () => {
-			this.timewalkService.rebuild();
+			this.timewalkService.rebuild(this.settings.calendars);
 			this.rerenderNavbars();
 		}));
 		this.registerEvent(this.app.vault.on("delete", () => {
-			this.timewalkService.rebuild();
+			this.timewalkService.rebuild(this.settings.calendars);
 			this.rerenderNavbars();
 		}));
 	}
 
-	async addDailyOrbit(leaf: WorkspaceLeaf) {
-		if (!this.hasDependencies()) {
-			return;
+	/**
+	 * Ensure a default "daily-notes" calendar exists if the core plugin is enabled
+	 */
+	private ensureDefaultCalendar() {
+		const hasDailyNotesCalendar = this.settings.calendars.some(c => c.sourceType === "daily-notes");
+		if (!hasDailyNotesCalendar) {
+			const dailyNotesFolder = this.getDailyNotesFolder();
+			if (dailyNotesFolder !== null) {
+				const calendar = createDefaultDailyNotesCalendar(dailyNotesFolder);
+				this.settings.calendars.push(calendar);
+				this.saveSettings();
+			}
+		} else {
+			// Update rootFolder from core plugin for existing daily-notes calendars
+			const dailyNotesFolder = this.getDailyNotesFolder();
+			if (dailyNotesFolder !== null) {
+				for (const cal of this.settings.calendars) {
+					if (cal.sourceType === "daily-notes") {
+						cal.rootFolder = dailyNotesFolder;
+					}
+				}
+			}
 		}
+	}
 
+	/**
+	 * Read the root folder from the Daily Notes core plugin
+	 */
+	getDailyNotesFolder(): string | null {
+		// @ts-ignore
+		const dailyNotesPlugin = this.app.internalPlugins.plugins["daily-notes"];
+		if (dailyNotesPlugin && dailyNotesPlugin.enabled) {
+			// @ts-ignore
+			const folder = dailyNotesPlugin.instance?.options?.folder;
+			return folder ?? "";
+		}
+		return null;
+	}
+
+	/**
+	 * Rebuild the timewalk service and re-render
+	 */
+	rebuildTimewalkService() {
+		this.timewalkService.rebuild(this.settings.calendars);
+		this.rerenderNavbars();
+	}
+
+	/**
+	 * Get a calendar source by ID
+	 */
+	getCalendar(calendarId: string): CalendarSource | undefined {
+		return this.settings.calendars.find(c => c.id === calendarId);
+	}
+
+	async addDailyOrbit(leaf: WorkspaceLeaf) {
 		// Check for markdown view and file
 		const markdownLeaves = this.app.workspace.getLeavesOfType("markdown");
 		if (!markdownLeaves.includes(leaf)) {
@@ -77,40 +129,67 @@ export default class DailyOrbitPlugin extends Plugin {
 		const navbar = navbarId ? this.getNavbar(navbarId) : null;
 
 		// Check if file is a daily note using timewalk service
-		const fileDate = this.timewalkService.getDailyNoteDate(activeFile);
+		const noteInfo = this.timewalkService.getDailyNoteInfo(activeFile);
 
-		if (!fileDate) {
-			// Not a daily note
+		if (noteInfo) {
+			// Found in a configured calendar
+			const { date: fileDate, calendarId } = noteInfo;
+
+			// Update metadata when opening a daily note
+			await this.updateDailyNoteMetadata(activeFile);
+
 			if (navbar) {
-				this.removeNavbar(navbar.id);
-				showChildren(titleContainerEl);
+				// Update calendarId if the file moved to a different calendar
+				if (navbar.calendarId !== calendarId) {
+					this.removeNavbar(navbar.id);
+					hideChildren(titleContainerEl);
+					this.createNavbar(view, titleContainerEl, fileDate, calendarId);
+				} else {
+					navbar.rerender();
+				}
+			} else {
+				hideChildren(titleContainerEl);
+				this.createNavbar(view, titleContainerEl, fileDate, calendarId);
 			}
 			return;
 		}
 
-		// Update metadata when opening a daily note
-		await this.updateDailyNoteMetadata(activeFile);
-
-		if (navbar) {
-			// Reuse navbar for new file
-			navbar.rerender();
-		} else {
-			hideChildren(titleContainerEl);
-			this.createNavbar(view, titleContainerEl, fileDate);
+		// Check for unconfigured calendar
+		if (this.timewalkService.getUnconfiguredCalendarRoot(activeFile) !== null) {
+			// Show unconfigured banner instead of orbit
+			if (navbar) {
+				this.removeNavbar(navbar.id);
+				showChildren(titleContainerEl);
+			}
+			this.showUnconfiguredBanner(view, titleContainerEl);
+			return;
 		}
+
+		// Not a daily note at all
+		if (navbar) {
+			this.removeNavbar(navbar.id);
+			showChildren(titleContainerEl);
+		}
+		// Remove any unconfigured banners too
+		this.removeUnconfiguredBanner(view);
 	}
 
-	createNavbar(view: MarkdownView, parentEl: HTMLElement, date: moment.Moment): DailyOrbit {
+	createNavbar(view: MarkdownView, parentEl: HTMLElement, date: moment.Moment, calendarId: string): DailyOrbit {
+		// Remove any unconfigured banner
+		this.removeUnconfiguredBanner(view);
+
 		const navbarId = `${this.nextNavbarId++}`;
-		const navbar = new DailyOrbit(this, navbarId, view, parentEl, date);
+		const navbar = new DailyOrbit(this, navbarId, view, parentEl, date, calendarId);
 		this.navbars[navbarId] = navbar;
 		return navbar;
 	}
 
 	removeNavbar(id: string) {
 		const navbar = this.navbars[id];
-		navbar.parentEl.removeChild(navbar.containerEl);
-		delete this.navbars[id];
+		if (navbar) {
+			navbar.parentEl.removeChild(navbar.containerEl);
+			delete this.navbars[id];
+		}
 	}
 
 	getNavbar(id: string): DailyOrbit | undefined {
@@ -120,6 +199,38 @@ export default class DailyOrbitPlugin extends Plugin {
 	rerenderNavbars() {
 		for (const navbar of Object.values(this.navbars)) {
 			navbar.rerender();
+		}
+	}
+
+	/**
+	 * Show a subtle banner for unconfigured calendar roots
+	 */
+	private showUnconfiguredBanner(view: MarkdownView, titleContainerEl: HTMLElement) {
+		// Remove existing banner first
+		this.removeUnconfiguredBanner(view);
+
+		const banner = createDiv({ cls: 'daily-orbit-unconfigured-banner' });
+		banner.createSpan({ text: 'Daily Orbit: This note looks like a calendar entry. ' });
+		const configureLink = banner.createEl('a', { text: 'Configure', href: '#' });
+		configureLink.addEventListener('click', (e) => {
+			e.preventDefault();
+			// Open settings tab
+			// @ts-ignore - openSettingTab exists at runtime
+			this.app.setting.open();
+			// @ts-ignore
+			this.app.setting.openTabById(this.manifest.id);
+		});
+		banner.createSpan({ text: ' to enable the orbit bar.' });
+		titleContainerEl.appendChild(banner);
+	}
+
+	/**
+	 * Remove unconfigured banner from a view
+	 */
+	private removeUnconfiguredBanner(view: MarkdownView) {
+		const banners = view.containerEl.getElementsByClassName('daily-orbit-unconfigured-banner');
+		while (banners.length > 0) {
+			banners[0].remove();
 		}
 	}
 
@@ -134,10 +245,13 @@ export default class DailyOrbitPlugin extends Plugin {
 		}
 
 		// Check if file is a daily note
-		const fileDate = this.timewalkService.getDailyNoteDate(file);
-		if (!fileDate) {
+		const noteInfo = this.timewalkService.getDailyNoteInfo(file);
+		if (!noteInfo) {
 			return; // Not a daily note, skip
 		}
+		const fileDate = noteInfo.date;
+		const calendar = this.getCalendar(noteInfo.calendarId);
+		if (!calendar) return;
 
 		try {
 			// Parse metadata properties from settings
@@ -151,7 +265,7 @@ export default class DailyOrbitPlugin extends Plugin {
 			// Update frontmatter atomically
 			await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
 				for (const { key, template } of properties) {
-					const value = this.replaceTemplateTokens(template, fileDate);
+					const value = this.replaceTemplateTokens(template, fileDate, calendar);
 					frontmatter[`${namespace}${key}`] = value;
 				}
 			});
@@ -199,11 +313,11 @@ export default class DailyOrbitPlugin extends Plugin {
 	 * Replace template tokens with actual date values
 	 * Supports: {YYYY}, {YY}, {MM}, {M}, {MMM}, {MMMM}, {DD}, {D}, {ddd}, {dddd}, {WW}, {W}, {WYYYY}
 	 */
-	private replaceTemplateTokens(template: string, date: moment.Moment): string | number {
+	private replaceTemplateTokens(template: string, date: moment.Moment, calendar: CalendarSource): string | number {
 		let result = template;
 
 		// Get week number and year for week-related tokens
-		const { weekNumber, weekYear } = this.getWeekNumberAndYear(date);
+		const { weekNumber, weekYear } = this.getWeekNumberAndYear(date, calendar);
 
 		// Replace week-specific tokens first
 		result = result.replace(/\{WYYYY\}/g, weekYear.toString());
@@ -226,10 +340,10 @@ export default class DailyOrbitPlugin extends Plugin {
 
 	/**
 	 * Calculate week number and year (handles cross-year boundaries correctly)
-	 * Respects firstDayOfWeek setting
+	 * Respects per-calendar firstDayOfWeek setting
 	 */
-	private getWeekNumberAndYear(date: moment.Moment): { weekNumber: number, weekYear: number } {
-		if (this.settings.firstDayOfWeek === "Monday") {
+	private getWeekNumberAndYear(date: moment.Moment, calendar: CalendarSource): { weekNumber: number, weekYear: number } {
+		if (calendar.firstDayOfWeek === "Monday") {
 			// ISO week: use isoWeek() and isoWeekYear() to handle year boundaries correctly
 			return {
 				weekNumber: date.isoWeek(),
@@ -266,8 +380,8 @@ export default class DailyOrbitPlugin extends Plugin {
 		}
 
 		// Check if file is a daily note
-		const fileDate = this.timewalkService.getDailyNoteDate(activeFile);
-		if (!fileDate) {
+		const noteInfo = this.timewalkService.getDailyNoteInfo(activeFile);
+		if (!noteInfo) {
 			// Not a daily note - remove navigation if exists
 			this.removeAllDocumentNavigations();
 			return;
@@ -286,7 +400,7 @@ export default class DailyOrbitPlugin extends Plugin {
 		this.pendingDocNavTimeout = window.setTimeout(() => {
 			this.pendingDocNavTimeout = null;
 			const docNavId = `${this.nextDocNavId++}`;
-			const docNav = new DocumentNavigation(this, view, fileDate);
+			const docNav = new DocumentNavigation(this, view, noteInfo.date, noteInfo.calendarId);
 			this.documentNavigations[docNavId] = docNav;
 
 			// Cleanup on view unload
@@ -310,9 +424,16 @@ export default class DailyOrbitPlugin extends Plugin {
 		}
 	}
 
-	async openDailyNote(date: moment.Moment, openType: FileOpenType) {
+	async openDailyNote(date: moment.Moment, openType: FileOpenType, calendarId?: string) {
+		// Determine which calendar to use
+		const effectiveCalendarId = calendarId || this.getActiveCalendarId();
+		if (!effectiveCalendarId) {
+			new Notice("Daily Orbit: No calendar configured");
+			return;
+		}
+
 		// Use timewalk service to find the correct file
-		let dailyNote = this.timewalkService.findDailyNote(date);
+		let dailyNote = this.timewalkService.findDailyNote(date, effectiveCalendarId);
 
 		// If not found, create it directly (bypasses buggy getDailyNote lookup)
 		if (!dailyNote) {
@@ -321,6 +442,23 @@ export default class DailyOrbitPlugin extends Plugin {
 		}
 
 		this.openFile(dailyNote, openType);
+	}
+
+	/**
+	 * Get the calendarId of the currently active orbit (if any)
+	 */
+	private getActiveCalendarId(): string | null {
+		const activeLeaf = this.app.workspace.activeLeaf;
+		if (activeLeaf) {
+			const navbarId = selectNavbarFromView(activeLeaf.view);
+			if (navbarId) {
+				const navbar = this.getNavbar(navbarId);
+				if (navbar) return navbar.calendarId;
+			}
+		}
+		// Fallback: use the first enabled calendar
+		const firstEnabled = this.settings.calendars.find(c => c.enabled);
+		return firstEnabled?.id ?? null;
 	}
 
 	async openFile(file: TFile, openType: FileOpenType) {
@@ -353,33 +491,35 @@ export default class DailyOrbitPlugin extends Plugin {
 		}
 	}
 
-	hasDependencies() {
-		// @ts-ignore
-		const dailyNotesPlugin = this.app.internalPlugins.plugins["daily-notes"];
-		// @ts-ignore
-		const periodicNotes = this.app.plugins.getPlugin("periodic-notes");
-
-		if (!dailyNotesPlugin && !periodicNotes) {
-			new Notice("Daily Orbit: Install Periodic Notes or Daily Notes");
-			return false;
+	async loadSettings() {
+		const data = await this.loadData();
+		if (data) {
+			const dailyNotesFolder = this.getDailyNotesFolderFromData();
+			this.settings = migrateSettings(data, dailyNotesFolder);
+		} else {
+			this.settings = Object.assign({}, DEFAULT_SETTINGS);
 		}
-
-		if (dailyNotesPlugin && dailyNotesPlugin.enabled) {
-			return true;
-		} else if (periodicNotes && periodicNotes.settings?.daily?.enabled) {
-			return true;
-		}
-
-		new Notice("Daily Orbit: Enable Periodic Notes or Daily Notes");
-		return false;
 	}
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+	/**
+	 * Try to read the Daily Notes folder early (before full plugin init).
+	 * Fallback to "" if not available.
+	 */
+	private getDailyNotesFolderFromData(): string {
+		try {
+			// @ts-ignore
+			const dailyNotesPlugin = this.app.internalPlugins.plugins["daily-notes"];
+			if (dailyNotesPlugin && dailyNotesPlugin.enabled) {
+				// @ts-ignore
+				return dailyNotesPlugin.instance?.options?.folder ?? "";
+			}
+		} catch {
+			// Ignore errors during early init
+		}
+		return "";
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
 }
-

@@ -5,16 +5,18 @@ export default class DocumentNavigation {
 	plugin: DailyOrbitPlugin;
 	view: MarkdownView;
 	currentDate: moment.Moment;
+	calendarId: string;
 	prevBtn: HTMLElement | null = null;
 	nextBtn: HTMLElement | null = null;
 	h1Wrapper: HTMLElement | null = null;
 	originalH1Parent: HTMLElement | null = null;
 	originalH1: HTMLElement | null = null;
 
-	constructor(plugin: DailyOrbitPlugin, view: MarkdownView, date: moment.Moment) {
+	constructor(plugin: DailyOrbitPlugin, view: MarkdownView, date: moment.Moment, calendarId: string) {
 		this.plugin = plugin;
 		this.view = view;
 		this.currentDate = date;
+		this.calendarId = calendarId;
 		this.render();
 	}
 
@@ -38,9 +40,9 @@ export default class DocumentNavigation {
 		// Create wrapper for H1 and buttons
 		this.h1Wrapper = createDiv({ cls: 'doc-nav-h1-wrapper' });
 
-		// Get prev/next notes
-		const prevNote = this.plugin.timewalkService.getPreviousDailyNote(this.currentDate);
-		const nextNote = this.plugin.timewalkService.getNextDailyNote(this.currentDate);
+		// Get prev/next notes scoped to this calendar
+		const prevNote = this.plugin.timewalkService.getPreviousDailyNote(this.currentDate, this.calendarId);
+		const nextNote = this.plugin.timewalkService.getNextDailyNote(this.currentDate, this.calendarId);
 
 		// Create prev button if there's a previous note
 		if (prevNote) {

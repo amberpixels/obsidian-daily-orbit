@@ -1,5 +1,6 @@
 import { TFile, moment, Vault } from 'obsidian';
 import { Timewalk, Waypoint, GroupWaypoint } from './timewalk';
+import { CalendarSource } from './types';
 
 /**
  * Obsidian file wrapper implementing Waypoint interface
@@ -31,80 +32,108 @@ export class ObsidianFileWaypoint implements Waypoint {
   }
 }
 
+/** Daily note path regex: YYYY/MM. MMM/DD ddd.md */
+const DAILY_NOTE_PATTERN = /(\d{4})\/(\d{2})\.\s*\w+\/(\d{2})\s+\w+\.md$/;
+const DAILY_NOTE_PATH_CAPTURE = /(\d{4})\/(\d{2})\.\s*\w+\/(\d{2})\s+\w+/;
+
 /**
- * Service for managing timewalk instance with Obsidian daily notes
+ * Result of getDailyNoteInfo: associates a file with its parsed date and calendar
+ */
+export interface DailyNoteInfo {
+  date: moment.Moment;
+  calendarId: string;
+}
+
+/**
+ * Service for managing per-calendar timewalk instances with Obsidian daily notes
  */
 export class TimewalkService {
-  private timewalk: Timewalk;
-  private waypointMap: Map<string, ObsidianFileWaypoint> = new Map();
+  private calendarTimewalks: Map<string, Timewalk> = new Map();
+  private calendarWaypointMaps: Map<string, Map<string, ObsidianFileWaypoint>> = new Map();
+  private calendars: CalendarSource[] = [];
   private vault: Vault;
 
   constructor(vault: Vault) {
     this.vault = vault;
-    // Initialize with empty timewalk first
-    this.timewalk = new Timewalk(new GroupWaypoint('daily-notes'));
-    this.rebuild();
   }
 
   /**
-   * Rebuild the timewalk instance from current daily notes
+   * Rebuild all timewalk instances from current calendars
    */
-  rebuild(): void {
-    const root = new GroupWaypoint('daily-notes');
-    this.waypointMap.clear();
+  rebuild(calendars: CalendarSource[]): void {
+    this.calendars = calendars;
+    this.calendarTimewalks.clear();
+    this.calendarWaypointMaps.clear();
 
-    console.log('[TimewalkService] Building timewalk from vault files...');
-
-    // Scan vault for files matching daily note pattern
+    const enabledCalendars = calendars.filter(c => c.enabled);
     const allFiles = this.vault.getMarkdownFiles();
-    const dailyNotePattern = /(\d{4})\/(\d{2})\.\s*\w+\/(\d{2})\s+\w+\.md$/;
-    const matchingFiles = allFiles.filter(file => dailyNotePattern.test(file.path));
+    const matchingFiles = allFiles.filter(file => DAILY_NOTE_PATTERN.test(file.path));
 
-    console.log('[TimewalkService] Found', matchingFiles.length, 'files matching daily note pattern');
+    for (const calendar of enabledCalendars) {
+      const root = new GroupWaypoint(calendar.id);
+      const waypointMap = new Map<string, ObsidianFileWaypoint>();
 
-    // Convert files to waypoints by parsing dates from FILE PATHS
-    let addedCount = 0;
-    for (const file of matchingFiles) {
-      // Parse date from path pattern: YYYY/MM. MMM/DD ddd
-      // Example: 0C. Calendarish/2025/12. Dec/29 Mon.md
-      const pathMatch = file.path.match(/(\d{4})\/(\d{2})\.\s*\w+\/(\d{2})\s+\w+/);
-      if (pathMatch) {
-        const [, year, month, day] = pathMatch;
-        // Use Date.UTC to avoid timezone issues - all dates at midnight UTC
-        const date = new Date(Date.UTC(parseInt(year), parseInt(month) - 1, parseInt(day)));
+      // Filter files under this calendar's root folder
+      const calendarFiles = matchingFiles.filter(file =>
+        this.fileIsUnderRoot(file.path, calendar.rootFolder)
+      );
 
-        const waypoint = new ObsidianFileWaypoint(file, date);
-        root.addChild(waypoint);
-        this.waypointMap.set(file.path, waypoint);
-        addedCount++;
+      for (const file of calendarFiles) {
+        const pathMatch = file.path.match(DAILY_NOTE_PATH_CAPTURE);
+        if (pathMatch) {
+          const [, year, month, day] = pathMatch;
+          const date = new Date(Date.UTC(parseInt(year), parseInt(month) - 1, parseInt(day)));
+          const waypoint = new ObsidianFileWaypoint(file, date);
+          root.addChild(waypoint);
+          waypointMap.set(file.path, waypoint);
+        }
+      }
+
+      this.calendarTimewalks.set(calendar.id, new Timewalk(root));
+      this.calendarWaypointMaps.set(calendar.id, waypointMap);
+    }
+  }
+
+  /**
+   * Check if a file path is under a root folder
+   */
+  private fileIsUnderRoot(filePath: string, rootFolder: string): boolean {
+    if (!rootFolder || rootFolder === "") {
+      return true; // Empty root = vault root, matches everything
+    }
+    // Normalize: ensure rootFolder doesn't have trailing slash
+    const normalizedRoot = rootFolder.replace(/\/+$/, '');
+    return filePath.startsWith(normalizedRoot + '/') || filePath.startsWith(normalizedRoot + '\\');
+  }
+
+  /**
+   * Check if a file is a daily note and return its date + calendarId
+   */
+  getDailyNoteInfo(file: TFile): DailyNoteInfo | null {
+    // Check each calendar's waypoint map
+    for (const [calendarId, waypointMap] of this.calendarWaypointMaps) {
+      const waypoint = waypointMap.get(file.path);
+      if (waypoint) {
+        return {
+          date: moment(waypoint.time()),
+          calendarId,
+        };
       }
     }
 
-    console.log('[TimewalkService] Added', addedCount, 'daily note waypoints');
-
-    this.timewalk = new Timewalk(root);
-  }
-
-  /**
-   * Check if a file is a daily note and return its date
-   */
-  getDailyNoteDate(file: TFile): moment.Moment | null {
-    const waypoint = this.waypointMap.get(file.path);
-    if (waypoint) {
-      const date = waypoint.time();
-      return moment(date);
-    }
-
-    // Fallback: try to parse from path
-    // Pattern: YYYY/MM. MMM/DD ddd
-    const pathMatch = file.path.match(/(\d{4})\/(\d{2})\.\s*\w+\/(\d{2})\s+\w+/);
+    // Fallback: try to parse from path and match to a calendar
+    const pathMatch = file.path.match(DAILY_NOTE_PATH_CAPTURE);
     if (pathMatch) {
       const [, year, month, day] = pathMatch;
       const dateStr = `${year}-${month}-${day}`;
       const parsedDate = moment(dateStr, "YYYY-MM-DD");
+      if (!parsedDate.isValid()) return null;
 
-      if (parsedDate.isValid()) {
-        return parsedDate;
+      // Find which enabled calendar this file belongs to
+      for (const calendar of this.calendars.filter(c => c.enabled)) {
+        if (this.fileIsUnderRoot(file.path, calendar.rootFolder)) {
+          return { date: parsedDate, calendarId: calendar.id };
+        }
       }
     }
 
@@ -112,32 +141,34 @@ export class TimewalkService {
   }
 
   /**
-   * Find the daily note file for a specific date
+   * Find the daily note file for a specific date within a calendar
    */
-  findDailyNote(date: moment.Moment): TFile | null {
+  findDailyNote(date: moment.Moment, calendarId: string): TFile | null {
+    const timewalk = this.calendarTimewalks.get(calendarId);
+    if (!timewalk) return null;
+
     const targetDate = date.toDate();
-    const results = this.timewalk.find(targetDate);
+    const results = timewalk.find(targetDate);
 
     if (results.length > 0) {
       const waypoint = results[0] as ObsidianFileWaypoint;
       return waypoint.getFile();
     }
-
     return null;
   }
 
   /**
-   * Check if a daily note exists for a date
+   * Check if a daily note exists for a date in a specific calendar
    */
-  hasDailyNote(date: moment.Moment): boolean {
-    return this.findDailyNote(date) !== null;
+  hasDailyNote(date: moment.Moment, calendarId: string): boolean {
+    return this.findDailyNote(date, calendarId) !== null;
   }
 
   /**
-   * Get the previous daily note before the given date
+   * Get the previous daily note before the given date within a calendar
    */
-  getPreviousDailyNote(currentDate: moment.Moment): TFile | null {
-    const { waypoints, currentIndex } = this.getSortedWaypoints(currentDate);
+  getPreviousDailyNote(currentDate: moment.Moment, calendarId: string): TFile | null {
+    const { waypoints, currentIndex } = this.getSortedWaypoints(currentDate, calendarId);
 
     if (currentIndex > 0) {
       return (waypoints[currentIndex - 1] as ObsidianFileWaypoint).getFile();
@@ -146,10 +177,10 @@ export class TimewalkService {
   }
 
   /**
-   * Get the next daily note after the given date
+   * Get the next daily note after the given date within a calendar
    */
-  getNextDailyNote(currentDate: moment.Moment): TFile | null {
-    const { waypoints, currentIndex } = this.getSortedWaypoints(currentDate);
+  getNextDailyNote(currentDate: moment.Moment, calendarId: string): TFile | null {
+    const { waypoints, currentIndex } = this.getSortedWaypoints(currentDate, calendarId);
 
     if (currentIndex !== -1 && currentIndex < waypoints.length - 1) {
       return (waypoints[currentIndex + 1] as ObsidianFileWaypoint).getFile();
@@ -158,13 +189,16 @@ export class TimewalkService {
   }
 
   /**
-   * Get sorted waypoints and find current note's index
+   * Get sorted waypoints and find current note's index for a specific calendar
    */
-  private getSortedWaypoints(currentDate: moment.Moment): { waypoints: Waypoint[], currentIndex: number } {
+  private getSortedWaypoints(currentDate: moment.Moment, calendarId: string): { waypoints: Waypoint[], currentIndex: number } {
+    const timewalk = this.calendarTimewalks.get(calendarId);
+    if (!timewalk) return { waypoints: [], currentIndex: -1 };
+
     const waypoints: Waypoint[] = [];
 
     // Traverse in 'future' direction (oldest first) to get chronological order
-    this.timewalk.traverse((waypoint) => {
+    timewalk.traverse((waypoint) => {
       waypoints.push(waypoint);
     }, { direction: 'future', filter: 'leaves' });
 
@@ -186,9 +220,34 @@ export class TimewalkService {
   }
 
   /**
-   * Get the underlying timewalk instance
+   * Get the underlying timewalk instance for a specific calendar
    */
-  getTimewalk(): Timewalk {
-    return this.timewalk;
+  getTimewalk(calendarId: string): Timewalk | undefined {
+    return this.calendarTimewalks.get(calendarId);
+  }
+
+  /**
+   * For unconfigured calendar detection:
+   * If a file matches the daily note regex but doesn't fall under any configured calendar's rootFolder,
+   * extract the path prefix before the YYYY/ part and return it.
+   */
+  getUnconfiguredCalendarRoot(file: TFile): string | null {
+    // Must match the daily note pattern
+    if (!DAILY_NOTE_PATTERN.test(file.path)) return null;
+
+    // Check if it falls under any configured calendar
+    for (const calendar of this.calendars.filter(c => c.enabled)) {
+      if (this.fileIsUnderRoot(file.path, calendar.rootFolder)) {
+        return null; // Already configured
+      }
+    }
+
+    // Extract root: everything before the YYYY/ part
+    const yearMatch = file.path.match(/^(.+?)\/\d{4}\//);
+    if (yearMatch) {
+      return yearMatch[1];
+    }
+
+    return ""; // File is at vault root
   }
 }
