@@ -19,6 +19,12 @@ export interface CalendarSource {
   // For "custom": user enters manually
   rootFolder: string;      // vault-relative path (e.g., "0C. Calendarish")
 
+  // Note file path format (moment.js format string, e.g., "YYYY/MM. MMM/DD ddd")
+  noteFormat: string;
+
+  // When true + sourceType is "daily-notes", auto-sync rootFolder and noteFormat from core plugin
+  inheritFromPlugin: boolean;
+
   // Per-calendar display settings:
   dateFormat: string;
   tooltipDateFormat: string;

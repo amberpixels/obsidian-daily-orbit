@@ -1,6 +1,7 @@
 import { TFile, moment, Vault } from 'obsidian';
 import { Timewalk, Waypoint, GroupWaypoint } from './timewalk';
 import { CalendarSource } from './types';
+import { NoteFormatPattern, buildNoteFormatPattern, extractDateFromMatch, COMMON_NOTE_FORMATS } from './note-format';
 
 /**
  * Obsidian file wrapper implementing Waypoint interface
@@ -32,10 +33,6 @@ export class ObsidianFileWaypoint implements Waypoint {
   }
 }
 
-/** Daily note path regex: YYYY/MM. MMM/DD ddd.md */
-const DAILY_NOTE_PATTERN = /(\d{4})\/(\d{2})\.\s*\w+\/(\d{2})\s+\w+\.md$/;
-const DAILY_NOTE_PATH_CAPTURE = /(\d{4})\/(\d{2})\.\s*\w+\/(\d{2})\s+\w+/;
-
 /**
  * Result of getDailyNoteInfo: associates a file with its parsed date and calendar
  */
@@ -50,6 +47,7 @@ export interface DailyNoteInfo {
 export class TimewalkService {
   private calendarTimewalks: Map<string, Timewalk> = new Map();
   private calendarWaypointMaps: Map<string, Map<string, ObsidianFileWaypoint>> = new Map();
+  private calendarPatterns: Map<string, NoteFormatPattern> = new Map();
   private calendars: CalendarSource[] = [];
   private vault: Vault;
 
@@ -64,34 +62,68 @@ export class TimewalkService {
     this.calendars = calendars;
     this.calendarTimewalks.clear();
     this.calendarWaypointMaps.clear();
+    this.calendarPatterns.clear();
 
     const enabledCalendars = calendars.filter(c => c.enabled);
     const allFiles = this.vault.getMarkdownFiles();
-    const matchingFiles = allFiles.filter(file => DAILY_NOTE_PATTERN.test(file.path));
+
+    // Compile each calendar's noteFormat into a regex pattern
+    for (const calendar of enabledCalendars) {
+      const pattern = buildNoteFormatPattern(calendar.noteFormat);
+      if (pattern) {
+        this.calendarPatterns.set(calendar.id, pattern);
+      } else {
+        console.warn(`[Daily Orbit] Calendar "${calendar.name}" has invalid noteFormat: "${calendar.noteFormat}"`);
+      }
+    }
 
     for (const calendar of enabledCalendars) {
       const root = new GroupWaypoint(calendar.id);
       const waypointMap = new Map<string, ObsidianFileWaypoint>();
+      const pattern = this.calendarPatterns.get(calendar.id);
+
+      if (!pattern) {
+        // No valid pattern — skip this calendar
+        this.calendarTimewalks.set(calendar.id, new Timewalk(root));
+        this.calendarWaypointMaps.set(calendar.id, waypointMap);
+        continue;
+      }
 
       // Filter files under this calendar's root folder
-      const calendarFiles = matchingFiles.filter(file =>
+      const calendarFiles = allFiles.filter(file =>
         this.fileIsUnderRoot(file.path, calendar.rootFolder)
       );
 
       for (const file of calendarFiles) {
-        const pathMatch = file.path.match(DAILY_NOTE_PATH_CAPTURE);
+        // Get relative path without root folder prefix and .md extension
+        const relativePath = this.getRelativePath(file.path, calendar.rootFolder);
+        const pathWithoutExt = relativePath.replace(/\.md$/, '');
+        const pathMatch = pathWithoutExt.match(pattern.regex);
         if (pathMatch) {
-          const [, year, month, day] = pathMatch;
-          const date = new Date(Date.UTC(parseInt(year), parseInt(month) - 1, parseInt(day)));
-          const waypoint = new ObsidianFileWaypoint(file, date);
-          root.addChild(waypoint);
-          waypointMap.set(file.path, waypoint);
+          const date = extractDateFromMatch(pathMatch, pattern);
+          if (date) {
+            const waypoint = new ObsidianFileWaypoint(file, date);
+            root.addChild(waypoint);
+            waypointMap.set(file.path, waypoint);
+          }
         }
       }
 
       this.calendarTimewalks.set(calendar.id, new Timewalk(root));
       this.calendarWaypointMaps.set(calendar.id, waypointMap);
     }
+  }
+
+  /**
+   * Get relative path by stripping the root folder prefix
+   */
+  private getRelativePath(filePath: string, rootFolder: string): string {
+    if (!rootFolder) return filePath;
+    const normalizedRoot = rootFolder.replace(/\/+$/, '');
+    if (filePath.startsWith(normalizedRoot + '/')) {
+      return filePath.substring(normalizedRoot.length + 1);
+    }
+    return filePath;
   }
 
   /**
@@ -121,18 +153,23 @@ export class TimewalkService {
       }
     }
 
-    // Fallback: try to parse from path and match to a calendar
-    const pathMatch = file.path.match(DAILY_NOTE_PATH_CAPTURE);
-    if (pathMatch) {
-      const [, year, month, day] = pathMatch;
-      const dateStr = `${year}-${month}-${day}`;
-      const parsedDate = moment(dateStr, "YYYY-MM-DD");
-      if (!parsedDate.isValid()) return null;
+    // Fallback: try to parse from path using each calendar's pattern
+    for (const calendar of this.calendars.filter(c => c.enabled)) {
+      if (!this.fileIsUnderRoot(file.path, calendar.rootFolder)) continue;
 
-      // Find which enabled calendar this file belongs to
-      for (const calendar of this.calendars.filter(c => c.enabled)) {
-        if (this.fileIsUnderRoot(file.path, calendar.rootFolder)) {
-          return { date: parsedDate, calendarId: calendar.id };
+      const pattern = this.calendarPatterns.get(calendar.id);
+      if (!pattern) continue;
+
+      const relativePath = this.getRelativePath(file.path, calendar.rootFolder);
+      const pathWithoutExt = relativePath.replace(/\.md$/, '');
+      const pathMatch = pathWithoutExt.match(pattern.regex);
+      if (pathMatch) {
+        const date = extractDateFromMatch(pathMatch, pattern);
+        if (date) {
+          const parsedDate = moment(date);
+          if (parsedDate.isValid()) {
+            return { date: parsedDate, calendarId: calendar.id };
+          }
         }
       }
     }
@@ -228,26 +265,40 @@ export class TimewalkService {
 
   /**
    * For unconfigured calendar detection:
-   * If a file matches the daily note regex but doesn't fall under any configured calendar's rootFolder,
-   * extract the path prefix before the YYYY/ part and return it.
+   * If a file matches any common daily note format but doesn't fall under any configured calendar's rootFolder,
+   * extract the path prefix before the date part and return it.
    */
   getUnconfiguredCalendarRoot(file: TFile): string | null {
-    // Must match the daily note pattern
-    if (!DAILY_NOTE_PATTERN.test(file.path)) return null;
+    if (!file.path.endsWith('.md')) return null;
 
-    // Check if it falls under any configured calendar
+    // Check if it falls under any configured calendar's root folder
     for (const calendar of this.calendars.filter(c => c.enabled)) {
       if (this.fileIsUnderRoot(file.path, calendar.rootFolder)) {
-        return null; // Already configured
+        return null; // File belongs to a configured calendar, not unconfigured
       }
     }
 
-    // Extract root: everything before the YYYY/ part
-    const yearMatch = file.path.match(/^(.+?)\/\d{4}\//);
-    if (yearMatch) {
-      return yearMatch[1];
+    // Probe common formats against the file path
+    const pathWithoutExt = file.path.replace(/\.md$/, '');
+    for (const fmt of COMMON_NOTE_FORMATS) {
+      const pattern = buildNoteFormatPattern(fmt);
+      if (!pattern) continue;
+
+      // Try matching against the full path — the format might be preceded by a root folder
+      const match = pathWithoutExt.match(pattern.unanchoredRegex);
+      if (match) {
+        const date = extractDateFromMatch(match, pattern);
+        if (date) {
+          // Extract root: everything before the matched portion
+          const matchIndex = pathWithoutExt.indexOf(match[0]);
+          if (matchIndex > 0) {
+            return pathWithoutExt.substring(0, matchIndex).replace(/\/+$/, '');
+          }
+          return ""; // File is at vault root
+        }
+      }
     }
 
-    return ""; // File is at vault root
+    return null;
   }
 }

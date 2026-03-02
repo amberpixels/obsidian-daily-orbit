@@ -30,9 +30,27 @@ export default class DailyOrbitPlugin extends Plugin {
 			this.addDocumentNavigation(leaf);
 		}));
 		this.registerEvent(this.app.workspace.on("file-open", (file) => {
-			// Re-add document navigation when file opens in same leaf
+			// Update orbit and document navigation when file opens in same leaf
 			const activeLeaf = this.app.workspace.activeLeaf;
 			if (activeLeaf) {
+				// Check if the new file belongs to a different calendar than the current orbit
+				const navbarId = selectNavbarFromView(activeLeaf.view);
+				const navbar = navbarId ? this.getNavbar(navbarId) : null;
+				if (file && navbar) {
+					const noteInfo = this.timewalkService.getDailyNoteInfo(file);
+					if (!noteInfo || noteInfo.calendarId !== navbar.calendarId) {
+						// Cross-calendar or non-daily-note: need full rebuild
+						this.addDailyOrbit(activeLeaf);
+					} else {
+						// Same calendar: lightweight rerender is sufficient
+						this.rerenderNavbars();
+					}
+				} else if (file && !navbar) {
+					// No orbit yet: try to add one
+					this.addDailyOrbit(activeLeaf);
+				} else {
+					this.rerenderNavbars();
+				}
 				this.addDocumentNavigation(activeLeaf);
 			}
 		}));
@@ -59,18 +77,21 @@ export default class DailyOrbitPlugin extends Plugin {
 		if (!hasDailyNotesCalendar) {
 			const dailyNotesFolder = this.getDailyNotesFolder();
 			if (dailyNotesFolder !== null) {
-				const calendar = createDefaultDailyNotesCalendar(dailyNotesFolder);
+				const noteFormat = this.getDailyNotesFormat();
+				const calendar = createDefaultDailyNotesCalendar(dailyNotesFolder, noteFormat);
 				this.settings.calendars.push(calendar);
 				this.saveSettings();
 			}
 		} else {
-			// Update rootFolder from core plugin for existing daily-notes calendars
+			// Update rootFolder and noteFormat from core plugin for inheriting daily-notes calendars
 			const dailyNotesFolder = this.getDailyNotesFolder();
-			if (dailyNotesFolder !== null) {
-				for (const cal of this.settings.calendars) {
-					if (cal.sourceType === "daily-notes") {
+			const noteFormat = this.getDailyNotesFormat();
+			for (const cal of this.settings.calendars) {
+				if (cal.sourceType === "daily-notes" && cal.inheritFromPlugin) {
+					if (dailyNotesFolder !== null) {
 						cal.rootFolder = dailyNotesFolder;
 					}
+					cal.noteFormat = noteFormat;
 				}
 			}
 		}
@@ -88,6 +109,24 @@ export default class DailyOrbitPlugin extends Plugin {
 			return folder ?? "";
 		}
 		return null;
+	}
+
+	/**
+	 * Read the note format from the Daily Notes core plugin
+	 */
+	getDailyNotesFormat(): string {
+		try {
+			// @ts-ignore
+			const dailyNotesPlugin = this.app.internalPlugins.plugins["daily-notes"];
+			if (dailyNotesPlugin && dailyNotesPlugin.enabled) {
+				// @ts-ignore
+				const format = dailyNotesPlugin.instance?.options?.format;
+				if (format && typeof format === 'string') return format;
+			}
+		} catch {
+			// Ignore errors
+		}
+		return "YYYY-MM-DD";
 	}
 
 	/**
@@ -130,7 +169,6 @@ export default class DailyOrbitPlugin extends Plugin {
 
 		// Check if file is a daily note using timewalk service
 		const noteInfo = this.timewalkService.getDailyNoteInfo(activeFile);
-
 		if (noteInfo) {
 			// Found in a configured calendar
 			const { date: fileDate, calendarId } = noteInfo;
@@ -155,7 +193,8 @@ export default class DailyOrbitPlugin extends Plugin {
 		}
 
 		// Check for unconfigured calendar
-		if (this.timewalkService.getUnconfiguredCalendarRoot(activeFile) !== null) {
+		const unconfiguredRoot = this.timewalkService.getUnconfiguredCalendarRoot(activeFile);
+		if (unconfiguredRoot !== null) {
 			// Show unconfigured banner instead of orbit
 			if (navbar) {
 				this.removeNavbar(navbar.id);
@@ -424,6 +463,49 @@ export default class DailyOrbitPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Create a note for a custom calendar using its noteFormat
+	 */
+	async createNoteForCalendar(date: moment.Moment, calendar: CalendarSource): Promise<TFile> {
+		const formatted = date.format(calendar.noteFormat);
+		const root = calendar.rootFolder ? calendar.rootFolder.replace(/\/+$/, '') + '/' : '';
+		const filePath = `${root}${formatted}.md`;
+
+		// Ensure parent directories exist
+		const parentDir = filePath.substring(0, filePath.lastIndexOf('/'));
+		if (parentDir) {
+			const existing = this.app.vault.getAbstractFileByPath(parentDir);
+			if (!existing) {
+				await this.app.vault.createFolder(parentDir);
+			}
+		}
+
+		// Create the file
+		return await this.app.vault.create(filePath, '');
+	}
+
+	/**
+	 * Find or create a daily note for the given date and calendar
+	 */
+	async ensureDailyNote(date: moment.Moment, calendarId: string): Promise<TFile> {
+		// Try to find existing note first
+		const existing = this.timewalkService.findDailyNote(date, calendarId);
+		if (existing) return existing;
+
+		const calendar = this.getCalendar(calendarId);
+		if (!calendar) {
+			throw new Error(`Calendar not found: ${calendarId}`);
+		}
+
+		// For inherited daily-notes calendars, use the core plugin's createDailyNote
+		if (calendar.sourceType === 'daily-notes' && calendar.inheritFromPlugin) {
+			return await createDailyNote(date);
+		}
+
+		// For custom calendars or non-inheriting daily-notes, create using noteFormat
+		return await this.createNoteForCalendar(date, calendar);
+	}
+
 	async openDailyNote(date: moment.Moment, openType: FileOpenType, calendarId?: string) {
 		// Determine which calendar to use
 		const effectiveCalendarId = calendarId || this.getActiveCalendarId();
@@ -432,13 +514,14 @@ export default class DailyOrbitPlugin extends Plugin {
 			return;
 		}
 
-		// Use timewalk service to find the correct file
-		let dailyNote = this.timewalkService.findDailyNote(date, effectiveCalendarId);
-
-		// If not found, create it directly (bypasses buggy getDailyNote lookup)
-		if (!dailyNote) {
-			console.log('[Daily Orbit] Creating new daily note for', date.format('YYYY-MM-DD'));
-			dailyNote = await createDailyNote(date);
+		// Find or create the note
+		let dailyNote: TFile;
+		try {
+			dailyNote = await this.ensureDailyNote(date, effectiveCalendarId);
+		} catch (error) {
+			console.error('[Daily Orbit] Failed to ensure daily note:', error);
+			new Notice(`Daily Orbit: Failed to create note`);
+			return;
 		}
 
 		this.openFile(dailyNote, openType);
@@ -495,7 +578,8 @@ export default class DailyOrbitPlugin extends Plugin {
 		const data = await this.loadData();
 		if (data) {
 			const dailyNotesFolder = this.getDailyNotesFolderFromData();
-			this.settings = migrateSettings(data, dailyNotesFolder);
+			const dailyNotesFormat = this.getDailyNotesFormat();
+			this.settings = migrateSettings(data, dailyNotesFolder, dailyNotesFormat);
 		} else {
 			this.settings = Object.assign({}, DEFAULT_SETTINGS);
 		}

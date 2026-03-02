@@ -1,4 +1,4 @@
-import { AbstractInputSuggest, App, PluginSettingTab, Setting, TFolder } from "obsidian";
+import { AbstractInputSuggest, App, PluginSettingTab, Setting, TFolder, setIcon } from "obsidian";
 import { FirstDayOfWeek, FIRST_DAY_OF_WEEK, FileOpenType, FILE_OPEN_TYPES, NavbarMode, NAVBAR_MODES, CalendarSource } from "./types";
 import { toRecord } from "./utils";
 import DailyOrbitPlugin from "./main";
@@ -8,6 +8,13 @@ import DailyOrbitPlugin from "./main";
  * Shows matching vault folders as the user types.
  */
 class FolderSuggest extends AbstractInputSuggest<TFolder> {
+	private onSelectFolderCb?: (path: string) => void;
+
+	onSelectFolder(cb: (path: string) => void): this {
+		this.onSelectFolderCb = cb;
+		return this;
+	}
+
 	getSuggestions(inputStr: string): TFolder[] {
 		const folders: TFolder[] = [];
 		for (const file of this.app.vault.getAllLoadedFiles()) {
@@ -28,6 +35,7 @@ class FolderSuggest extends AbstractInputSuggest<TFolder> {
 
 	selectSuggestion(folder: TFolder) {
 		this.setValue(folder.path);
+		this.onSelectFolderCb?.(folder.path);
 		this.close();
 	}
 }
@@ -43,6 +51,8 @@ export interface DailyOrbitSettings {
 
 /** Default per-calendar settings used when creating new calendars */
 export const DEFAULT_CALENDAR_SETTINGS = {
+	noteFormat: "YYYY-MM-DD",
+	inheritFromPlugin: false,
 	dateFormat: "ddd",
 	tooltipDateFormat: "YYYY-MM-DD",
 	firstDayOfWeek: "Monday" as FirstDayOfWeek,
@@ -74,7 +84,7 @@ export function generateCalendarId(): string {
 /**
  * Create a default "daily-notes" calendar source
  */
-export function createDefaultDailyNotesCalendar(rootFolder: string): CalendarSource {
+export function createDefaultDailyNotesCalendar(rootFolder: string, noteFormat?: string): CalendarSource {
 	return {
 		id: generateCalendarId(),
 		sourceType: "daily-notes",
@@ -82,6 +92,8 @@ export function createDefaultDailyNotesCalendar(rootFolder: string): CalendarSou
 		enabled: true,
 		rootFolder,
 		...DEFAULT_CALENDAR_SETTINGS,
+		noteFormat: noteFormat ?? DEFAULT_CALENDAR_SETTINGS.noteFormat,
+		inheritFromPlugin: true,
 	};
 }
 
@@ -90,11 +102,17 @@ export function createDefaultDailyNotesCalendar(rootFolder: string): CalendarSou
  * If loaded data has old per-calendar fields at the top level but no calendars array,
  * create a default calendar from those settings.
  */
-export function migrateSettings(data: Record<string, unknown>, dailyNotesFolder: string): DailyOrbitSettings {
+export function migrateSettings(data: Record<string, unknown>, dailyNotesFolder: string, dailyNotesFormat?: string): DailyOrbitSettings {
 	// Already migrated
 	if (data.calendars && Array.isArray(data.calendars)) {
+		// Ensure all calendars have noteFormat and inheritFromPlugin fields
+		const calendars = (data.calendars as CalendarSource[]).map(cal => ({
+			...cal,
+			noteFormat: cal.noteFormat ?? DEFAULT_CALENDAR_SETTINGS.noteFormat,
+			inheritFromPlugin: cal.inheritFromPlugin ?? (cal.sourceType === "daily-notes"),
+		}));
 		return Object.assign({}, DEFAULT_SETTINGS, {
-			calendars: data.calendars,
+			calendars,
 			defaultOpenType: data.defaultOpenType ?? DEFAULT_SETTINGS.defaultOpenType,
 			setActive: data.setActive ?? DEFAULT_SETTINGS.setActive,
 			enableAutoMetadata: data.enableAutoMetadata ?? DEFAULT_SETTINGS.enableAutoMetadata,
@@ -104,7 +122,7 @@ export function migrateSettings(data: Record<string, unknown>, dailyNotesFolder:
 	}
 
 	// Old format: migrate per-calendar fields into a default calendar
-	const calendar = createDefaultDailyNotesCalendar(dailyNotesFolder);
+	const calendar = createDefaultDailyNotesCalendar(dailyNotesFolder, dailyNotesFormat);
 	if (data.dateFormat && typeof data.dateFormat === 'string') {
 		calendar.dateFormat = data.dateFormat;
 	}
@@ -161,6 +179,7 @@ export class DailyOrbitSettingTab extends PluginSettingTab {
 						enabled: true,
 						rootFolder: "",
 						...DEFAULT_CALENDAR_SETTINGS,
+						inheritFromPlugin: false,
 					};
 					this.plugin.settings.calendars.push(calendar);
 					await this.plugin.saveSettings();
@@ -253,13 +272,19 @@ export class DailyOrbitSettingTab extends PluginSettingTab {
 		const details = containerEl.createEl('details', { cls: 'daily-orbit-calendar-section' });
 		const summary = details.createEl('summary', { cls: 'daily-orbit-calendar-section__summary' });
 
-		// Summary row: calendar name + type badge + controls
+		// Summary row: calendar name + type badge + path + controls
 		const summaryLabel = summary.createSpan({ cls: 'daily-orbit-calendar-section__label' });
 		summaryLabel.createSpan({ text: calendar.name });
 		summaryLabel.createSpan({
 			cls: 'daily-orbit-calendar-section__badge',
 			text: isDailyNotes ? 'core plugin' : 'custom',
 		});
+		if (calendar.rootFolder) {
+			summaryLabel.createSpan({
+				cls: 'daily-orbit-calendar-section__path',
+				text: calendar.rootFolder,
+			});
+		}
 
 		// Controls in the summary row (toggle + delete) — stop click propagation so they don't toggle <details>
 		const controls = summary.createSpan({ cls: 'daily-orbit-calendar-section__controls' });
@@ -278,17 +303,26 @@ export class DailyOrbitSettingTab extends PluginSettingTab {
 		// Prevent toggle clicks from collapsing/expanding the details
 		controls.addEventListener('click', (e) => e.stopPropagation());
 
+		if (isDailyNotes) {
+			// Invisible spacer matching delete button width for alignment
+			controls.createEl('div', {
+				cls: 'daily-orbit-calendar-section__delete-spacer',
+			});
+		}
+
 		if (!isDailyNotes) {
-			toggleSetting.addButton(btn => btn
-				.setButtonText("Delete")
-				.setWarning()
-				.onClick(async () => {
-					if (!window.confirm(`Delete calendar "${calendar.name}"? This cannot be undone.`)) return;
-					this.plugin.settings.calendars = this.plugin.settings.calendars.filter(c => c.id !== calendar.id);
-					await this.plugin.saveSettings();
-					this.plugin.rebuildTimewalkService();
-					this.display();
-				}));
+			const deleteBtn = controls.createEl('button', {
+				cls: 'daily-orbit-calendar-section__delete-btn',
+				attr: { 'aria-label': 'Delete calendar' },
+			});
+			setIcon(deleteBtn, 'trash-2');
+			deleteBtn.addEventListener('click', async () => {
+				if (!window.confirm(`Delete calendar "${calendar.name}"? This cannot be undone.`)) return;
+				this.plugin.settings.calendars = this.plugin.settings.calendars.filter(c => c.id !== calendar.id);
+				await this.plugin.saveSettings();
+				this.plugin.rebuildTimewalkService();
+				this.display();
+			});
 		}
 
 		// Collapsible body
@@ -306,30 +340,83 @@ export class DailyOrbitSettingTab extends PluginSettingTab {
 					}));
 		}
 
-		// Root folder
+		// Inherit from plugin toggle (daily-notes calendars only)
 		if (isDailyNotes) {
 			new Setting(body)
+				.setName('Inherit from Daily Notes plugin')
+				.setDesc('Auto-sync root folder and note format from the core Daily Notes plugin.')
+				.addToggle(toggle => toggle
+					.setValue(calendar.inheritFromPlugin)
+					.onChange(async (value) => {
+						calendar.inheritFromPlugin = value;
+						if (value) {
+							// Sync from core plugin
+							const folder = this.plugin.getDailyNotesFolder();
+							if (folder !== null) calendar.rootFolder = folder;
+							calendar.noteFormat = this.plugin.getDailyNotesFormat();
+						}
+						await this.plugin.saveSettings();
+						this.plugin.rebuildTimewalkService();
+						this.plugin.rerenderNavbars();
+						this.display(); // Refresh to update read-only state
+					}));
+		}
+
+		// Root folder
+		const isInheriting = isDailyNotes && calendar.inheritFromPlugin;
+		if (isInheriting) {
+			const rootFolderSetting = new Setting(body)
 				.setName('Root folder')
 				.setDesc('Auto-detected from Daily Notes core plugin (read-only).')
 				.addText(text => {
 					text.setValue(calendar.rootFolder);
 					text.setDisabled(true);
 				});
+			rootFolderSetting.settingEl.addClass('daily-orbit-setting--wide-input');
+			rootFolderSetting.settingEl.addClass('daily-orbit-setting--inherited');
 		} else {
-			new Setting(body)
+			const rootFolderSetting = new Setting(body)
 				.setName('Root folder')
 				.setDesc('Vault-relative path to scan for daily notes.')
 				.addSearch(search => {
+					const saveRootFolder = async (value: string) => {
+						calendar.rootFolder = value;
+						await this.plugin.saveSettings();
+						this.plugin.rebuildTimewalkService();
+						this.plugin.rerenderNavbars();
+					};
 					search.setPlaceholder('e.g., folder/subfolder')
 						.setValue(calendar.rootFolder)
-						.onChange(async (value) => {
-							calendar.rootFolder = value;
-							await this.plugin.saveSettings();
-							this.plugin.rebuildTimewalkService();
-							this.plugin.rerenderNavbars();
-						});
-					new FolderSuggest(this.app, search.inputEl);
+						.onChange(saveRootFolder);
+					new FolderSuggest(this.app, search.inputEl)
+						.onSelectFolder(saveRootFolder);
 				});
+			rootFolderSetting.settingEl.addClass('daily-orbit-setting--wide-input');
+		}
+
+		// Note format
+		const noteFormatSetting = new Setting(body)
+			.setName('Note format')
+			.setDesc('Moment.js format string for daily note file paths (e.g., "YYYY/MM. MMM/DD ddd").');
+		noteFormatSetting.settingEl.addClass('daily-orbit-setting--medium-input');
+
+		if (isInheriting) {
+			noteFormatSetting.setDesc('Auto-detected from Daily Notes core plugin (read-only).');
+			noteFormatSetting.settingEl.addClass('daily-orbit-setting--inherited');
+			noteFormatSetting.addText(text => {
+				text.setValue(calendar.noteFormat);
+				text.setDisabled(true);
+			});
+		} else {
+			noteFormatSetting.addText(text => text
+				.setPlaceholder(DEFAULT_CALENDAR_SETTINGS.noteFormat)
+				.setValue(calendar.noteFormat)
+				.onChange(async (value) => {
+					calendar.noteFormat = value.trim() === "" ? DEFAULT_CALENDAR_SETTINGS.noteFormat : value;
+					await this.plugin.saveSettings();
+					this.plugin.rebuildTimewalkService();
+					this.plugin.rerenderNavbars();
+				}));
 		}
 
 		// Date format
